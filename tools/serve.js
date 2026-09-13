@@ -27,7 +27,7 @@ const TYPES = {
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
 };
 
-console.log('aetheris: starting');
+console.log('plants: starting');
 
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(req.url.split('?')[0].split('#')[0]);
@@ -49,11 +49,11 @@ const server = http.createServer((req, res) => {
 
 server.on('error', err => {
   if (err.code === 'EADDRINUSE') {
-    console.log(`aetheris: listening on ${URL} (already running)`);
+    console.log(`plants: listening on ${URL} (already running)`);
     process.exit(0);
   }
   console.error(err);
   process.exit(1);
 });
 
-server.listen(PORT, () => console.log(`aetheris: listening on ${URL}`));
+server.listen(PORT, () => console.log(`plants: listening on ${URL}`));
