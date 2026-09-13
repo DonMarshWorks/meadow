@@ -1,0 +1,13 @@
+{
+  "name": "plants",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plants that evolve their own shape competing for a flat arena. The site itself has no dependencies; this file exists only for the test harness.",
+  "scripts": {
+    "verify": "node tools/verify.js",
+    "serve": "node tools/serve.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

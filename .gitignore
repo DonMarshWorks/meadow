@@ -1,0 +1,12 @@
+node_modules/
+CLAUDE.local.md
+*.bak
+# scratch: sweep plans, result files, diagnostic one-offs, working screenshots.
+# The findings live in docs/, the raw output is not worth carrying.
+sweeps/
+.measure/
+
+# working screenshots beyond the two the documents reference
+shots/*.png
+!shots/a-bigger-plants.png
+!shots/d-square-window-letterbox.png
