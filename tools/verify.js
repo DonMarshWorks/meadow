@@ -17,7 +17,10 @@
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { chromium } = require('playwright');
+/* Required lazily, so `--static` needs nothing installed at all. The instant
+   checks are the ones somebody runs while editing, and making them depend on a
+   browser download is how a check stops being run. */
+let chromium = null;
 
 const ROOT = path.resolve(__dirname, '..');
 const PAGE = path.join(ROOT, 'index.html');
@@ -492,6 +495,14 @@ async function clean(browser) {
   if (process.argv.includes('--static')) {
     console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mstatic checks passed\x1b[0m');
     process.exit(failures ? 1 : 0);
+  }
+
+  try { chromium = require('playwright').chromium; }
+  catch (e) {
+    console.log('\n\x1b[31mplaywright is not installed.\x1b[0m ' +
+                'Run:  npm i && npx playwright install chromium');
+    console.log('(`npm run verify -- --static` needs nothing installed.)');
+    process.exit(1);
   }
 
   /* Served rather than opened from disk, because that is how it ships — and
