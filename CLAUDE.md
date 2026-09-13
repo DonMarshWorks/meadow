@@ -25,7 +25,9 @@ node tools/shot.js out.png --nohud --wait 40
 ```
 
 It prints the world's own numbers beside the picture, so what is on screen and
-what the simulation believes are never two separate claims.
+what the simulation believes are never two separate claims. It needs the
+harness installed — `npm i && npx playwright install chromium`, once. Serving
+the page needs nothing at all, and neither does `npm run verify -- --static`.
 
 **Use that tool rather than driving a browser by hand.** Photographing this page
 has three traps in it and all three produce the identical symptom — a perfectly
