@@ -9,11 +9,42 @@ https://donmarshworks.github.io/plants/
 between a more legible individual plant and a marginally better diversity
 number, take the plant and write down what it cost.
 
+## Running it
+
+**For a person:** `npm run serve`, then open `http://localhost:8000/`. It also
+works by opening `index.html` straight off disk — it fetches nothing — but test
+it served, because that is how it ships.
+
+**For Claude, to actually look at a change:**
+
+```
+npm run shot                                    → shots/latest.png
+node tools/shot.js out.png --size 1600x900
+node tools/shot.js out.png --hash '#seed=7&step=0.05&minfrag=100'
+node tools/shot.js out.png --nohud --wait 40
+```
+
+It prints the world's own numbers beside the picture, so what is on screen and
+what the simulation believes are never two separate claims.
+
+**Use that tool rather than driving a browser by hand.** Photographing this page
+has three traps in it and all three produce the identical symptom — a perfectly
+black arena behind a perfectly correct HUD, which reads as a rendering bug and
+is not one. `tools/shot.js` handles all three and says why in its header. In
+short: the GL flags must be ANGLE-over-SwiftShader, the shutter must wait long
+enough for a *sliced* rebuild to finish under software rendering, and
+`requestAnimationFrame` must **not** be stubbed, because the frame loop is what
+draws.
+
+The last of those cuts against the rule right below it, and the distinction is
+the whole thing: a probe that **measures** must stub rAF; a probe that wants a
+**picture** must not. Handing rAF back afterwards does not work — the boot
+schedules the loop with its own rAF call, and that is the call being dropped.
+
 ## Working on it
 
-- `index.html` is the entire program. Edit it directly.
-- Serve locally: `npm run serve` then open `http://localhost:8000/` (it also
-  works from `file://`, but test served — that is how it ships).
+- `index.html` is the entire program. Edit it directly. There is no build step
+  and no generator; if you find one, it is stale scaffolding, not the source.
 - **Verify changes: `npm run verify`.** One-time setup: `npm i` then
   `npx playwright install chromium`. It renders in software so results are
   deterministic on any machine, which makes it slow — several minutes.

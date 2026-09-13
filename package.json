@@ -5,7 +5,8 @@
   "description": "Plants that evolve their own shape competing for a flat arena. The site itself has no dependencies; this file exists only for the test harness.",
   "scripts": {
     "verify": "node tools/verify.js",
-    "serve": "node tools/serve.js"
+    "serve": "node tools/serve.js",
+    "shot": "node tools/shot.js"
   },
   "devDependencies": {
     "playwright": "^1.49.0"
