@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Serves the working tree and opens it. Deliberately no GPU or security
+      // flags: the point is to see what a visitor sees before pushing, and a
+      // flag that fixes something here would hide a real problem there.
+      "name": "Plants (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:8000/",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "plants: serve",
+      "postDebugTask": "plants: stop"
+    },
+    {
+      "name": "Plants (Edge)",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:8000/",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "plants: serve",
+      "postDebugTask": "plants: stop"
+    }
+  ]
+}

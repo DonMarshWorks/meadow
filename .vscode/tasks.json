@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Started automatically by the Run and Debug button. It stays running in
+      // the background, so VS Code needs a pattern telling it when the server
+      // is up rather than waiting for the process to exit.
+      //
+      // Port 8000, the same as aetheris. --takeover replaces whatever copy of
+      // a serve.js is already on the port, so a stale server from either
+      // project cannot quietly answer for this one.
+      //
+      // The problem pattern must not match ordinary output. A catch-all
+      // pattern turned every line the server printed into a reported error,
+      // and VS Code then asked whether to debug anyway before every launch.
+      // It must also be a VALID pattern: the default kind is "location",
+      // which requires a line group, and a pattern without one is rejected
+      // before the task runs — which shows as the very same dialog.
+      "label": "plants: serve",
+      "type": "shell",
+      "command": "node tools/serve.js --takeover",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "plants",
+        "pattern": { "regexp": "^plants: fatal (.*)$", "kind": "file", "file": 1, "message": 1 },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^plants: starting",
+          "endsPattern": "^plants: listening on"
+        }
+      },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true }
+    },
+    {
+      // Run by the debugger when the session ends — the stop button, or the
+      // browser window being closed. There is no direct "stop that task"
+      // primitive in tasks.json; the recipe is an input variable that invokes
+      // the built-in terminate command, resolved before the shell runs.
+      "label": "plants: stop",
+      "type": "shell",
+      "command": "echo ${input:stopServe}",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared", "close": true }
+    },
+    {
+      "label": "plants: verify",
+      "type": "shell",
+      "command": "npm run verify",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "stopServe",
+      "type": "command",
+      "command": "workbench.action.tasks.terminate",
+      "args": "plants: serve"
+    }
+  ]
+}
