@@ -5916,6 +5916,7 @@ let perfT0 = 0;
    which of its keys reach a page at all is not known until it is tried, which
    is why the overlay's last line says what key arrived. */
 let perfOn = PARAMS.perf>0, lastKey = "none yet";
+const perfPrev = [0,0,0];
 function setPerf(v){
   perfOn = !!v; perfT0 = 0;
   if(!perfOn) perfEl.classList.remove("on");
@@ -5926,6 +5927,7 @@ function setPerf(v){
     PERF.frames=0; PERF.sim=0; PERF.sheet=0; PERF.draw=0; PERF.ticks=0;
     PERF.bghost=0; PERF.bsort=0; PERF.bemit=0; PERF.supload=0; PERF.sheets=0;
     PERF.wsim=0; PERF.wsheet=0; PERF.wdraw=0;
+    perfPrev[0]=perfPrev[1]=perfPrev[2]=0;
   }
 }
 const perfTaps = [];
@@ -5938,9 +5940,14 @@ addEventListener("pointerdown", e=>{
 }, {capture:true, passive:true});
 function showPerf(now){
   perfEl.classList.add("on");
-  PERF.wsim   = Math.max(PERF.wsim,   PERF.sim);
-  PERF.wsheet = Math.max(PERF.wsheet, PERF.sheet);
-  PERF.wdraw  = Math.max(PERF.wdraw,  PERF.draw);
+  /* THIS frame's share is the sum now less the sum a frame ago. Until
+     2026-09-20 the maximum was taken of the running sum itself, so "worst"
+     was the window's total: an iPhone read sim 3.0 / 219 at 60fps, and 219 is
+     3.0 times the frames in the window. */
+  PERF.wsim   = Math.max(PERF.wsim,   PERF.sim  -perfPrev[0]);
+  PERF.wsheet = Math.max(PERF.wsheet, PERF.sheet-perfPrev[1]);
+  PERF.wdraw  = Math.max(PERF.wdraw,  PERF.draw -perfPrev[2]);
+  perfPrev[0]=PERF.sim; perfPrev[1]=PERF.sheet; perfPrev[2]=PERF.draw;
   if(!perfT0){ perfT0=now; return; }
   if(now-perfT0 < 1000) return;
   const f = Math.max(1, PERF.frames);
@@ -5960,6 +5967,7 @@ function showPerf(now){
   PERF.frames=0; PERF.sim=0; PERF.sheet=0; PERF.draw=0; PERF.ticks=0;
   PERF.bghost=0; PERF.bsort=0; PERF.bemit=0; PERF.supload=0; PERF.sheets=0;
   PERF.wsim=0; PERF.wsheet=0; PERF.wdraw=0;
+  perfPrev[0]=perfPrev[1]=perfPrev[2]=0;
   perfT0 = now;
 }
 /* The achieved rate is read by the HUD whether or not the overlay is on, so
