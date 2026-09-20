@@ -817,12 +817,9 @@ own, chosen to stand apart from the plants already there, and passes it down. Ea
     outside the arena, or a child that would land outside it, is refused.
     Nothing wraps around to the other side.</p>
 
-    <p><b>The graphs</b> tell you whether it is still working. Two of them carry
-    a dashed line, and those two are the whole test: if life stops being spread
-    across five bands of form, from few short branches to many long ones, or
-    if one band takes more than half the world, the arena has gone to
-    monoculture and the piece has failed.
-    Everything else on that page is description.</p>
+    <p><b>The graphs</b> show how the meadow has changed since you arrived:
+    how many plants and how large, how much of their programs they use,
+    whether they remember anything, and how fast they move.</p>
 
     <h2>Watching</h2>
     <ul>
@@ -1348,8 +1345,8 @@ const PARAMS = {
                     // anything, whereas small solid marks with ground between
                     // them read as structure. Coverage is bought with the leaf
                     // size range, not with opacity.
-  fatlo:   0.20,    // the smallest and largest painted leaf, per step actually
-  fathi:   0.37,    // taken. The four node forms are spread evenly across the
+  fatlo:   0.16,    // the smallest and largest painted leaf, per step actually
+  fathi:   0.32,    // taken. The four node forms are spread evenly across the
                     // range, so the two together decide how much ground and
                     // how much branching structure the foliage hides. A low
                     // knob at zero lets the smallest forms vanish entirely.
@@ -2569,46 +2566,6 @@ function boxPoint(key,o){
   o[0] = -AX + (2*AX)*((i+prnd())/GEOX);
   o[1] = -AY + (2*AY)*((j+prnd())/GEOY);
 }
-function provinces(){
-  const map=new Map();
-  for(let i=0;i<nodeHigh;i++){
-    if(NLIVE[i]!==1) continue;
-    const k=boxOf(NX[i],NY[i]);
-    let h=map.get(k);
-    if(!h){ h=new Float64Array(32); map.set(k,h); }
-    h[formBin(i)]++;
-  }
-  const boxes=[...map.values()].filter(h=>{ let t=0; for(let j=0;j<32;j++) t+=h[j]; return t>=40; });
-  if(boxes.length<2) return {provinces:boxes.length, differentiation:0, withinEven:0};
-  const norm=boxes.map(h=>{ let t=0; for(let j=0;j<32;j++) t+=h[j];
-                            const o=new Float64Array(32); for(let j=0;j<32;j++) o[j]=h[j]/t; return o; });
-  let d=0, n=0;
-  for(let a=0;a<norm.length;a++) for(let b2=a+1;b2<norm.length;b2++){
-    let s2=0; for(let j=0;j<32;j++) s2+=Math.abs(norm[a][j]-norm[b2][j]);
-    d+=s2*0.5; n++;
-  }
-  let ev=0;
-  for(const o of norm){ let h2=0; for(let j=0;j<32;j++) if(o[j]>0) h2-=o[j]*Math.log(o[j]); ev+=h2/Math.log(32); }
-  return { provinces:norm.length,
-           differentiation:+(d/Math.max(1,n)).toFixed(4),
-           withinEven:+(ev/norm.length).toFixed(4) };
-}
-/* ---- reseeding the empty ---------------------------------------------
-   Dispersal does two jobs at once and they pull opposite ways: it fills the
-   planet, and it spreads whoever is already winning. Measured, the second
-   costs what the first buys — regional differentiation falls monotonically as
-   the spore rate rises, while turning dispersal off entirely leaves a quarter
-   of the provinces never colonised at all, because a plant can only reach
-   what it can walk to.
-
-   Don's separation: fill the empty places, but not with copies of the
-   incumbent. A founder here carries a NEW random genome, tipped toward one of
-   the five the way the opening seeding is, so it owes nothing to whatever is
-   succeeding elsewhere. The argument in the brief against de-novo seeding —
-   that a random genome dropped into a mature ecosystem is unfit and dies — is
-   about seeding into occupied ground. In an empty province there is nothing
-   to lose to, which is exactly why it is worth trying there and nowhere
-   else. */
 const RESEEDK=[];
 const _seedP=[0,0];
 function reseedEmpty(){
@@ -2741,16 +2698,6 @@ function quantiles(j){
 /* The step range is read once. It is a live pair on the settings panel, and a
    colour that moved when a slider did would be reporting the slider. */
 const SPLO0 = PARAMS.splo, SPHI0 = PARAMS.sphi;
-function formOf(i){
-  const c = (NCAP[i]-1)/Math.max(1, KIDMAX-1);
-  let st = (NSTEP[i]/PARAMS.step - SPLO0)/Math.max(1e-6, SPHI0-SPLO0);
-  st = st<0?0:(st>1?1:st);
-  return 0.5*c + 0.5*st;                       // 0..1 along the arc
-}
-/* Five bins along that scale. This is what the diversity gate counts: the
-   world has degenerated when the living nodes all sit in one of them. */
-function formBin(i){ const h=formOf(i)*5; return h<0?0:(h>=5?4:h|0); }
-const FORMNAME = ["spare","lean","middling","full","dense"];
 /* the lineage hue, 0..1 round the wheel; see randomGenome and inherit */
 const NHUE = new Float32Array(PMAX);
 /* A piece that splits off steps round the wheel from its parent (fraghue),
@@ -4201,13 +4148,6 @@ const HSER = [
    why:"Nodes in the average plant. Read it against the count above — many small plants and few large ones are very different worlds holding the same amount of life."},
   {k:"maxB",  label:"largest plant",       v:new Float32Array(HCAP),
    why:"The biggest single organism in the arena. A giant that keeps growing while the mean falls is one lineage taking over."},
-  /* `want` is the side of a line the piece needs to stay on. Only these two
-     carry it, because only these two *are* the acceptance test: diversity must
-     not collapse. Everything else is description; these are the pass mark. */
-  {k:"even",  label:"form evenness",       v:new Float32Array(HCAP), lo:0, hi:1, want:0.45, above:true,
-   why:"How evenly the living nodes are spread across five bands of form \u2014 few children on short steps at the spare end, many on long ones at the dense end. This is half the acceptance test: if one band holds everything, the arena has become a monoculture. The dashed line is the pass mark."},
-  {k:"top",   label:"biggest form share",  v:new Float32Array(HCAP), lo:0, hi:1, want:0.50, above:false,
-   why:"How much of the world the single most common band of form holds. The other half of the acceptance test \u2014 one form taking more than half is the failure this piece exists to avoid."},
   {k:"mixed", label:"plants of two minds", v:new Float32Array(HCAP), lo:0, hi:1,
    why:"The share of plants carrying more than one kind of node. It is the sign a single body has specialized internally — nursery nodes that sit and reproduce, scouts that run."},
   {k:"pace",  label:"mean pace",           v:new Float32Array(HCAP), lo:0, hi:1,
@@ -4223,7 +4163,6 @@ const HSER = [
 ];
 const HT = new Float32Array(HCAP);            // tick each sample was taken at
 let hN = 0, hEvery = 1, hSkip = 0;
-const HWHERE = new Float64Array(5);           // living nodes per form bin
 function historySample(vals){
   if(++hSkip < hEvery) return;
   hSkip = 0;
@@ -4576,14 +4515,17 @@ function pruneFragments(){
   scoreBodies();
   BDOOM.fill(0,0,nodeHigh);
   chooseTheOldest();
-  /* What forms life is taking: every living node counted into one of the
-     five form bins. This is what the diversity gate reads — see HSER. */
-  HWHERE.fill(0); BCM.fill(0,0,nodeHigh);
+  /* "Form" is retired as a metric (Don, 2026-09-19): living nodes counted
+     into five bins of capacity and step, with an evenness and a largest share
+     that were the acceptance test. It was written for thousands of small
+     plants; among a few dozen large ones a single plant decided it, and it
+     read red for the whole of the work that made this a meadow. What the
+     test reads now is in plantStats, under `diversity`. */
+  BCM.fill(0,0,nodeHigh);
   let hn=0, hpace=0, hmixed=0, hbodies=0;
   for(let i=0;i<nodeHigh;i++){
     if(NLIVE[i]!==1) continue;
     const r=PROOT[i];
-    HWHERE[formBin(i)]++;
     hpace+=NPACE[i]; hn++;
     BCM[r] |= (1<<NCAP[i]);
   }
@@ -4593,15 +4535,10 @@ function pruneFragments(){
     let m=BCM[r], bits=0; while(m){ bits+=m&1; m>>=1; }
     if(bits>=2) hmixed++;
   }
-  let wtot=0, wmax=0; for(let g=0;g<5;g++){ wtot+=HWHERE[g]; if(HWHERE[g]>wmax) wmax=HWHERE[g]; }
-  let ent=0;
-  if(wtot>0) for(let g=0;g<5;g++){ const p=HWHERE[g]/wtot; if(p>0) ent-=p*Math.log(p); }
   genomeSample();
   historySample({
     active:GSTAT.active, memRead:GSTAT.memRead, memBoth:GSTAT.memBoth, speed:GSTAT.speed,
     live:liveN, bodies:comps, meanB:meanComp, maxB:bigFrag,
-    even:ent/Math.log(5),
-    top:wtot>0 ? wmax/wtot : 0,
     mixed:hbodies>0 ? hmixed/hbodies : 0,
     pace:hn>0 ? hpace/hn : 0,
   });
@@ -5119,16 +5056,6 @@ function withinBody(){
 }
 
 function plantStats(reset){
-  /* the same entropy pruneFragments samples into the chart, recomputed here so
-     a probe that has not waited for a sweep still gets a number */
-  let whereTot=0, whereMax=0;
-  for(let g=0;g<5;g++){ whereTot+=HWHERE[g]; if(HWHERE[g]>whereMax) whereMax=HWHERE[g]; }
-  let whereEven=0;
-  if(whereTot>0){
-    let ent=0;
-    for(let g=0;g<5;g++){ const p=HWHERE[g]/whereTot; if(p>0) ent-=p*Math.log(p); }
-    whereEven = ent/Math.log(5);
-  }
   /* how much of a program actually reaches an output. One means nothing is
      being computed, however long the list is */
   let act=0, actN=0, actMin=1e9, actMax=0, badK=0;
@@ -5195,6 +5122,29 @@ function plantStats(reset){
     /* looks that found a node in its own shade, and the life that cost */
     shade:{ looks:shadeNodes, lifeTaken:shadeTicks },
     fragments:{ born:fragBorn, established:fragGrown },
+    /* ---- what the acceptance test reads ----
+       Is this a meadow, or has one thing taken it? Four ways of asking, of the
+       plants standing now: how much of the held ground the largest holds; how
+       many leaf shapes there are and what share of the living nodes the
+       commonest has; how unlike the plants' programs are, as the mean share
+       of instruction fields that differ between pairs; and who has been
+       breeding. Computed here, once, so every harness reads the same number. */
+    diversity:(()=>{
+      const st=RANKED.filter(r=>NLIVE[r]!==0 && PROOT[r]===r && PSIZE[r]>0);
+      let ground=0, topG=0; for(const r of st){ ground+=BAREA[r]; if(BAREA[r]>topG) topG=BAREA[r]; }
+      const sh=new Array(NSHAPES).fill(0); let nodes=0;
+      for(let i=0;i<nodeHigh;i++) if(NLIVE[i]===1){ sh[NSHAPE[i]]++; nodes++; }
+      let shapes=0, topS=0; for(const c of sh){ if(c>0) shapes++; if(c>topS) topS=c; }
+      const pick=st.length>40 ? st.filter((_,k)=>k%Math.ceil(st.length/40)===0) : st;
+      let gap=0, pairs=0;
+      for(let a=0;a<pick.length;a++) for(let b=a+1;b<pick.length;b++){ gap+=genomeGap(pick[a],pick[b]); pairs++; }
+      let ptot=0, ptop=0; for(const c of PARENTS.values()){ ptot+=c; if(c>ptop) ptop=c; }
+      return { plants:st.length,
+               topGround:+(ground>0 ? topG/ground : 0).toFixed(3),
+               shapes, topShape:+(nodes>0 ? topS/nodes : 0).toFixed(3),
+               programGap:+(pairs>0 ? gap/pairs/(PLEN*4) : 0).toFixed(3),
+               bred:bornSexual, parentLineages:PARENTS.size, topParent:+(ptot>0 ? ptop/ptot : 0).toFixed(3) };
+    })(),
     /* births and deaths under the scoring rules, and the best five scores */
     breeding:{ ranked:RANKED.length, diedAbove, diedBelow, bornSexual, bornRandom, bornNowhere, bornVacancy,
                parents:(()=>{ let tot=0, top=0; for(const c of PARENTS.values()){ tot+=c; if(c>top) top=c; } return { lineages:PARENTS.size, topShare:+(tot?top/tot:0).toFixed(3) }; })(),
@@ -5218,20 +5168,7 @@ function plantStats(reset){
     ancestry:(()=>{ let s=0,n=0,old=0;
       for(let i=0;i<nodeHigh;i++) if(NLIVE[i]===1){ const a=ptick-NANCE[i]; s+=a; n++; if(a>ptick*0.5) old++; }
       return { meanShare:+(n&&ptick? s/n/ptick : 0).toFixed(3), olderThanHalf:+(n? old/n : 0).toFixed(3) }; })(),
-    geo:provinces(),
-    /* What forms life is taking, as the share of living nodes in each of the
-       five form bins, and how evenly it is spread over them — which together
-       with topForm IS the acceptance test. Computed here, once, so that every
-       harness reads the same number: a second analysis path written in a
-       hurry is how this project has already lost two hours to a difference
-       that never existed. */
-    forms:{spare:+(HWHERE[0]/Math.max(1e-9,whereTot)).toFixed(4),
-           lean:+(HWHERE[1]/Math.max(1e-9,whereTot)).toFixed(4),
-           middling:+(HWHERE[2]/Math.max(1e-9,whereTot)).toFixed(4),
-           full:+(HWHERE[3]/Math.max(1e-9,whereTot)).toFixed(4),
-           dense:+(HWHERE[4]/Math.max(1e-9,whereTot)).toFixed(4)},
-    topForm:+(whereMax/Math.max(1e-9,whereTot)).toFixed(4),
-    evenness:+whereEven.toFixed(4)
+
   };
   if(reset){ resetStats(); frontDraw=frontDrop=frontYoung=budOk=budNo=0;
              hgtTried=hgtDone=0; }
@@ -5816,8 +5753,7 @@ function updateHUD(){
     num(liveN)+" living nodes";
   document.getElementById("sc2").textContent =
     comps+" plants · mean "+Math.round(meanComp)+" · largest "+num(bigFrag);
-  document.getElementById("sc3").textContent =
-    "evenness "+hLast("even").toFixed(2)+" · biggest form "+Math.round(hLast("top")*100)+"%";
+  document.getElementById("sc3").textContent = "";
 
   /* how big the held plant actually is, which is the question the highlight
      exists to answer — the colour shows the extent, this counts it. Keyed off
@@ -9462,18 +9398,6 @@ window.__world = {
             css:{x:(cw-w)*0.5, y:(ch-h)*0.5, w, h, cw, ch}};
   },
 
-  /* ---- what forms the world is taking ----
-     Living nodes per form bin, as shares. `hues()` and `env()` are old names
-     for the same slot and are kept for anything that still calls them. */
-  forms(){
-    let t=0; for(let g=0;g<5;g++) t+=HWHERE[g];
-    const out={};
-    for(let g=0;g<5;g++) out[FORMNAME[g]] = t>0 ? +(HWHERE[g]/t).toFixed(4) : 0;
-    out.total = +t.toFixed(1);
-    return out;
-  },
-  hues(){ return this.forms(); },
-  env(){ return this.forms(); },
   /* pass true to zero the sampling accumulators, so the next reading covers
      only the interval since this one */
   plants(reset){ return plantStats(reset); },

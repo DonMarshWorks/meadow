@@ -100,8 +100,7 @@ const wait = Number(flag('wait', 25)) * 1000;
     const p = window.__world.plants();
     const a = window.__world.arena();
     return { live: p.live, wood: p.wood, bodies: p.bodies, mean: p.meanBody,
-             largest: p.largestBody, even: p.evenness, top: p.topForm,
-             hues: p.forms, tick: p.tick,
+             largest: p.largestBody, d: p.diversity, tick: p.tick,
              arena: a.w + 'x' + a.h + ' (' + a.aspect + ')',
              lost: document.getElementById('gl').getContext('webgl2').isContextLost() };
   });
@@ -115,7 +114,7 @@ const wait = Number(flag('wait', 25)) * 1000;
   console.log(out);
   console.log(`  tick ${s.tick}   ${s.live} living nodes, ${s.wood} standing dead`);
   console.log(`  ${s.bodies} plants, mean ${s.mean}, largest ${s.largest}`);
-  console.log(`  form evenness ${s.even}   biggest form bin ${s.top}`);
-  console.log('  ' + Object.entries(s.hues).map(([k, v]) => k + ' ' + Math.round(v * 100) + '%').join('  '));
+  console.log(`  largest plant ${s.d.topGround} of the ground   ${s.d.shapes} leaf shapes, commonest ${s.d.topShape}`);
+  console.log(`  programs differ ${s.d.programGap}   ${s.d.bred} bred, busiest lineage ${s.d.topParent}`);
   console.log(`  arena ${s.arena}`);
 })();

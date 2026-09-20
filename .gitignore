@@ -6,8 +6,6 @@ CLAUDE.local.md
 sweeps/
 .measure/
 
-# working screenshots beyond the two the documents reference
+# working screenshots; the one kept is the link-preview image
 shots/*.png
-!shots/a-bigger-plants.png
 !shots/meadow.png
-!shots/d-square-window-letterbox.png

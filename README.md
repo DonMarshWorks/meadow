@@ -80,18 +80,20 @@ merely a description of it. The settings panel writes one for you.
 
 ## The acceptance test
 
-Two ways this genre of simulation dies: **monoculture**, where one form wins
-and diversity goes to zero, and **extinction**. Diversity is measured on the
-color arc: hue is a fixed projection of the phenotype, cut into five bins, and
-the living nodes are counted into them. The piece passes if, on the default
-settings across several seeds:
+Is it still a meadow, or has one thing taken it? On the default settings, across
+several seeds, after 12,000 ticks:
 
-- form evenness stays **above 0.45**
-- no single hue bin holds **more than half** the world
-- nothing goes extinct
+- at least **10 plants** are standing
+- no plant holds more than **a quarter** of the ground that is held
+- at least **6 leaf shapes** are present, and none covers more than half the
+  living nodes
+- two plants' programs differ, on average, in at least **0.40** of their fields
+- at least **50 bred births** have happened, and no one lineage has done more
+  than **0.65** of the parenting
 
-Those two lines are drawn on the graphs, and `npm run verify` fails the build on
-them. Everything else in the readout is description.
+Each mark stands well clear of what a healthy world does; `tools/verify.js`
+carries the measured ranges beside them, and `npm run verify` fails the build
+on any of them.
 
 ## Documents
 

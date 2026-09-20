@@ -312,19 +312,32 @@ async function invariants(browser) {
 /* ────────────────────────────────────────────────────────────────────────
    5. The acceptance test — this is the point of the piece
    ──────────────────────────────────────────────────────────────────────── */
-/* Two ways this genre of simulation dies: monoculture, where one form wins
-   and diversity goes to zero, and extinction. Both are checked on the DEFAULT
+/* Is it still a meadow, or has one thing taken it? Checked on the DEFAULT
    world across several seeds, because a piece that only works on the seed it
-   was tuned against does not work.
+   was tuned against does not work. Each line below names one way the piece
+   dies, and each pass mark stands well clear of what a healthy world does —
+   measured on six seeds at 12,000 and 24,000 ticks, 2026-09-19, the ranges in
+   brackets — so that going red means something happened and not that a seed
+   was unlucky.
 
-   Diversity is measured on form: capacity and step, cut into five bins, and
-   the two numbers below are the entropy of the living nodes over those bins
-   and the share the fullest bin holds. Until 2026-09-16 the same two numbers
-   were computed over five niches the plants made for each other, and until
-   2026-09-17 form was also what hue painted; now hue is ancestry and form is
-   only counted. */
-const EVEN_MIN = 0.45;   // form evenness may not fall below this
-const TOP_MAX  = 0.50;   // no one form bin may hold more than this
+     extinction          plants standing               [43..98]      >= 10
+     one plant           its share of the held ground  [0.04..0.08]  <= 0.25
+     one leaf            shapes present                [12]          >= 6
+                         the commonest, of living nodes [0.12..0.25] <= 0.50
+     one program         mean share of instruction fields that differ
+                         between two plants            [0.68..0.94]  >= 0.40
+     no breeding         bred births in the run        [243..268]    >= 50
+     one parent          the most prolific lineage's share of parenting
+                                                       [0.18..0.45]  <= 0.65
+
+   What this replaced: evenness and largest share over five bins of "form",
+   capacity and step. It was written for an arena of thousands of small
+   plants. Among a few dozen large ones a single plant could fill a bin, and
+   it read red from before plants could move until the day it was retired,
+   through everything that made this what it is; a gate that is always red
+   gates nothing. */
+const GATE = { plants: 10, topGround: 0.25, shapes: 6, topShape: 0.50,
+               programGap: 0.40, bred: 50, topParent: 0.65 };
 
 async function acceptance(browser) {
   section('Acceptance: it must not degenerate');
@@ -335,21 +348,25 @@ async function acceptance(browser) {
     await page.evaluate(() => window.__world.runWorld(12000));
     const p = await page.evaluate(() => {
       const q = window.__world.plants();
-      return { live: q.live, bodies: q.bodies, even: q.evenness, top: q.topForm,
-               hues: q.forms, mean: q.meanBody };
+      return { live: q.live, bodies: q.bodies, mean: q.meanBody, d: q.diversity };
     });
     rows.push({ seed: s, ...p });
     await page.close();
 
-    const label = s.replace('#seed=', 'seed ');
-    check(p.live > 0 && p.bodies > 0,
-      p.live > 0 ? `${label}: alive — ${p.live} nodes in ${p.bodies} plants (mean ${p.mean})`
+    const label = s.replace('#seed=', 'seed '), d = p.d;
+    check(p.live > 0 && d.plants >= GATE.plants,
+      p.live > 0 ? `${label}: alive — ${p.live} nodes in ${d.plants} plants (needs >= ${GATE.plants})`
                  : `${label}: EXTINCT`);
-    check(p.even >= EVEN_MIN,
-      `${label}: form evenness ${p.even.toFixed(2)} (needs >= ${EVEN_MIN})`);
-    check(p.top <= TOP_MAX,
-      `${label}: biggest form ${p.top.toFixed(2)} (needs <= ${TOP_MAX}) — ` +
-      Object.entries(p.hues).map(([k, v]) => k + ' ' + (v * 100).toFixed(0) + '%').join(' '));
+    check(d.topGround <= GATE.topGround,
+      `${label}: largest plant holds ${d.topGround.toFixed(2)} of the ground (needs <= ${GATE.topGround})`);
+    check(d.shapes >= GATE.shapes && d.topShape <= GATE.topShape,
+      `${label}: ${d.shapes} leaf shapes, the commonest ${d.topShape.toFixed(2)} of nodes ` +
+      `(needs >= ${GATE.shapes} and <= ${GATE.topShape})`);
+    check(d.programGap >= GATE.programGap,
+      `${label}: programs differ in ${d.programGap.toFixed(2)} of their fields (needs >= ${GATE.programGap})`);
+    check(d.bred >= GATE.bred && d.topParent <= GATE.topParent,
+      `${label}: ${d.bred} bred births from ${d.parentLineages} lineages, the busiest ${d.topParent.toFixed(2)} ` +
+      `(needs >= ${GATE.bred} and <= ${GATE.topParent})`);
   }
   return rows;
 }

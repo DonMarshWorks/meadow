@@ -79,11 +79,15 @@ schedules the loop with its own rAF call, and that is the call being dropped.
    when the page is opened off a disk, because a file page has no origin. The
    favicon is an inline SVG data URI. `verify.js` fails the build if anything
    leaves the origin.
-2. **It must not degenerate.** Over a run, on the default settings, across
-   seeds: form evenness above **0.45**, no single form bin above **0.50** of
-   the world, nothing extinct. Form is capacity and step cut into five bins
-   (`formOf`); it used to be painted as hue and is now only counted. `verify.js` gates on it. As of 2026-09-16 two of four
-   seeds sit at 0.51 and 0.54 on the second number; see the README.
+2. **It must stay a meadow.** On the default settings, across seeds, after
+   12,000 ticks: at least 10 plants; no plant holding over a quarter of the
+   held ground; at least 6 leaf shapes and none over half the living nodes;
+   programs differing in at least 0.40 of their fields between plants; at least
+   50 bred births, no lineage doing over 0.65 of the parenting. `verify.js`
+   gates on it and carries the measured ranges each mark was set against.
+   "Form" — evenness over five bins of capacity and step — was the gate until
+   2026-09-19 and is retired everywhere: it read red from before movement
+   until then, and a gate that is always red gates nothing.
 3. **The arena is 16:9 at every window shape**, centred, with black bars
    outside it. The world is never reshaped by the window.
 4. **Adaptive resolution** must keep it near 60fps; it lowers DPR when frames
@@ -334,7 +338,7 @@ is dropped rather than paid later, and the HUD prints the rate actually
 achieved — never the multiplier, because on a slow machine that would be a claim
 the piece cannot keep.
 
-**Test hooks.** `window.__world` exposes `plants()`, `forms()`, `arena()`,
+**Test hooks.** `window.__world` exposes `plants()`, `bodies()`, `deathLog()`, `arena()`,
 `runWorld()`, `growPlants()`, `printGenome()`, `instHash()`, `params()`,
 `defaults()`, `settings()`, `pins()`, `pick()`, `selected()`, `markedBodies()`,
 `overlapScan()`, `hopScan()`, `wallScan()`, `stemScan()`, `seam()`, `paintOrder()`,

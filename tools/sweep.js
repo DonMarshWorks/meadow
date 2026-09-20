@@ -86,7 +86,7 @@ async function run(browser, arm, seed) {
     return {
       live: p.live, wood: p.wood, bodies: p.bodies,
       mean: p.meanBody, largest: p.largestBody,
-      even: p.evenness, top: p.topForm, hues: p.forms,
+      even: p.diversity.programGap, top: p.diversity.topGround, d: p.diversity,
       mixed: p.body && p.body.mixedCapBodies,
       fanSD: p.body && p.body.fanSD, stepSD: p.body && p.body.stepSD,
       nonFinite: p.nonFinite,
@@ -99,10 +99,13 @@ async function run(browser, arm, seed) {
 }
 
 /* ---- the acceptance test ----
-   Two lines and both must hold, measured over five hue bins of the phenotype
-   (see verify.js). Everything else in the report is description. */
+   The same marks verify.js holds the default world to; see the table there.
+   The two columns the report prints, under their old headings, are now how
+   unlike the plants' programs are (`even`) and the largest plant's share of
+   the held ground (`top`). */
 const alive  = s => s.live > 0 && s.bodies > 0;
-const passes = s => alive(s) && s.even >= 0.45 && s.top <= 0.50;
+const passes = s => alive(s) && s.d.plants >= 10 && s.d.topGround <= 0.25 && s.d.shapes >= 6 &&
+                    s.d.topShape <= 0.50 && s.d.programGap >= 0.40 && s.d.bred >= 50 && s.d.topParent <= 0.65;
 
 (async () => {
   const browser = await chromium.launch({ args: GL_ARGS });
@@ -171,6 +174,6 @@ const passes = s => alive(s) && s.even >= 0.45 && s.top <= 0.50;
     console.log('\nEXTINCTIONS (not averaged into anything above):');
     for (const r of died) console.log('  ' + r.arm + ': ' + r.dead + ' of ' + (r.dead + r.n) + ' seeds');
   }
-  console.log('\npass = seeds with form evenness >= 0.45 and biggest hue bin <= 0.50');
+  console.log('\npass = seeds meeting every mark in verify.js; even = program gap, top = share of ground held by the largest plant');
   await browser.close();
 })();
