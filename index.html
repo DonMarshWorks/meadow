@@ -1402,13 +1402,16 @@ const PARAMS = {
      drove the weather and the ecology ran at a fixed rate underneath,
      because the ratio between the two was itself a tuning parameter with a
      measured optimum. Nothing here has a ratio to keep. */
-  ecorate: 190,     // ecology ticks per second at x1. The sphere's ecology ran
-                    // at about this whatever its time-lapse was set to, and
-                    // every duration in ticks above was measured against it —
-                    // `fadein` is a quarter of a second at this rate, `rot` is
-                    // five seconds, a 1500-tick life is eight. Change it and
-                    // every one of those changes with it.
-  ecoshare: 0.25,   // the SHARE of each frame that may be spent on ecology, and
+  ecorate: 80,      // ecology ticks per second at x1. It was 190, the sphere's
+                    // rate, and no machine ever ran it: the frame budget fed
+                    // on itself (see the frame loop) and an iPhone at 60fps
+                    // measured 80. Every duration in ticks was judged by eye
+                    // at about that pace, so when the budget was mended on
+                    // 2026-09-20 the rate was brought down to what had been
+                    // watched rather than the look sped up to what had been
+                    // written (Don). Change it and every duration in ticks
+                    // changes with it.
+  ecoshare: 0.25,   // the least SHARE of each frame that may be spent on ecology, and
                     // a share rather than a fixed few milliseconds because a
                     // per-frame budget quietly punishes a slow machine: 4ms at
                     // 60fps is 240ms of ecology a second and at 30fps it is
@@ -5795,6 +5798,7 @@ let simRate = 0;                       // measured ecology ticks per second
 let ecoDebt = 0;
 let res = 1;                           // adaptive resolution multiplier
 let lastFrameMs = 16.7;
+let otherMs = 4, slowFrames = false;   // the frame's work apart from the ecology; and whether 60 is out of reach
 
 function resize(){
   const dpr = Math.min(devicePixelRatio||1, 2);
@@ -5831,6 +5835,9 @@ function meterFps(now){
     /* and how much of a frame the rebuild may take. Sliced rather than
        skipped: the same milliseconds spread evenly instead of arriving in a
        lump, which is the whole of what smoothness is. */
+    /* which frame to budget the ecology against. Far apart for the reason
+       the resolution's pair is: between them nothing changes its mind. */
+    if(fpsNow < 40) slowFrames = true; else if(fpsNow > 55) slowFrames = false;
     sheetSlice = fpsNow < 50 ? Math.max(1.5, 1000/Math.max(1,fpsNow)*0.20) : 0;
   }
 }
@@ -5864,13 +5871,24 @@ function frame(now){
        honoured. */
     const cap = PARAMS.ecorate*speed;
     if(ecoDebt > cap) ecoDebt = cap;
-    const budget = Math.min(PARAMS.ecomax, lastFrameMs*PARAMS.ecoshare);
+    /* What the plants may spend is the frame the machine can HOLD, less what
+       the rest of the frame needs, and never under their share of it. Until
+       2026-09-20 it was a share of lastFrameMs, which is how long the last
+       frame WORKED and not how long it lasted, and that fed itself both ways.
+       A fast machine worked five milliseconds, so the plants were given one
+       and a bit, so it worked less: an iPhone idle eleven milliseconds a frame
+       ran 80 ticks a second of the 190 asked for. A slow machine's long frames
+       bought a longer budget, which made longer frames. */
+    const frameMs = slowFrames ? 33.3 : 16.7;
+    const budget = Math.min(PARAMS.ecomax,
+                     Math.max(frameMs*PARAMS.ecoshare, frameMs*0.85 - otherMs));
     while(ecoDebt >= 1){
       plantsStep(); ecoDebt -= 1; didTicks++;
       if(performance.now()-_s0 >= budget) break;
     }
   }
-  PERF.sim += performance.now()-_s0;
+  const _simMs = performance.now()-_s0;
+  PERF.sim += _simMs;
   PERF.ticks += didTicks; PERF.ticksAll += didTicks;
 
   resize();
@@ -5894,6 +5912,9 @@ function frame(now){
   if(hudAccum > 0.25){ hudAccum = 0; updateHUD(); if(chartsOn) drawCharts(); }
 
   lastFrameMs = performance.now()-fStart;
+  /* smoothed, because the rebuild's slices and the HUD come and go and a
+     budget that twitched with them would make the tick rate twitch too */
+  otherMs += 0.2*(Math.max(0, lastFrameMs-_simMs) - otherMs);
   PERF.frames++;
   if(perfOn) showPerf(now);
 }
