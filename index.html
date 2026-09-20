@@ -5798,6 +5798,7 @@ let simRate = 0;                       // measured ecology ticks per second
 let ecoDebt = 0;
 let res = 1;                           // adaptive resolution multiplier
 let lastFrameMs = 16.7;
+let lastBudget = 0, workSum = 0;
 let otherMs = 4, slowFrames = false;   // the frame's work apart from the ecology; and whether 60 is out of reach
 
 function resize(){
@@ -5882,6 +5883,7 @@ function frame(now){
     const frameMs = slowFrames ? 33.3 : 16.7;
     const budget = Math.min(PARAMS.ecomax,
                      Math.max(frameMs*PARAMS.ecoshare, frameMs*0.85 - otherMs));
+    lastBudget = budget;
     while(ecoDebt >= 1){
       plantsStep(); ecoDebt -= 1; didTicks++;
       if(performance.now()-_s0 >= budget) break;
@@ -5915,6 +5917,7 @@ function frame(now){
   /* smoothed, because the rebuild's slices and the HUD come and go and a
      budget that twitched with them would make the tick rate twitch too */
   otherMs += 0.2*(Math.max(0, lastFrameMs-_simMs) - otherMs);
+  workSum += lastFrameMs;
   PERF.frames++;
   if(perfOn) showPerf(now);
 }
@@ -5945,6 +5948,7 @@ function setPerf(v){
     perfEl.classList.add("on"); perfEl.textContent = "measuring";
     /* the counters run whether or not anyone is looking, so the first window
        after switching on would report everything since the page opened */
+    workSum=0;
     PERF.frames=0; PERF.sim=0; PERF.sheet=0; PERF.draw=0; PERF.ticks=0;
     PERF.bghost=0; PERF.bsort=0; PERF.bemit=0; PERF.supload=0; PERF.sheets=0;
     PERF.wsim=0; PERF.wsheet=0; PERF.wdraw=0;
@@ -5975,6 +5979,11 @@ function showPerf(now){
   const px = (VW*VH)/1000;
   const L = [
     "fps    "+fpsNow.toFixed(1)+"   res "+res.toFixed(2)+"   "+VW+"x"+VH+"  ("+Math.round(px)+"kpx)",
+    /* how long a frame LASTS beside how long it WORKED: when the first is far
+       the larger, the wait is for the GPU or the display and no amount of
+       cheaper JavaScript will shorten it. The budget and the rate asked for
+       also say which frame loop a cached page is actually running. */
+    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed)+"/s",
     "sim    "+(PERF.sim/f).toFixed(1)+" / "+PERF.wsim.toFixed(1)+"      "+PERF.ticks+" ticks  ("+simRate.toFixed(0)+"/s)",
     "sheet  "+(PERF.sheet/f).toFixed(1)+" / "+PERF.wsheet.toFixed(1)+"      "+PERF.sheets+" rebuilds",
     "  ghost "+PERF.bghost.toFixed(1)+"  sort "+PERF.bsort.toFixed(1)+"  emit "+PERF.bemit.toFixed(1)+"  up "+PERF.supload.toFixed(1),
@@ -5985,6 +5994,7 @@ function showPerf(now){
   ];
   perfEl.textContent = L.join("\n");
   simRate = PERF.ticks*1000/(now-perfT0);
+  workSum=0;
   PERF.frames=0; PERF.sim=0; PERF.sheet=0; PERF.draw=0; PERF.ticks=0;
   PERF.bghost=0; PERF.bsort=0; PERF.bemit=0; PERF.supload=0; PERF.sheets=0;
   PERF.wsim=0; PERF.wsheet=0; PERF.wdraw=0;
