@@ -1,14 +1,11 @@
 # Meadow
 
-Plants that evolve their own shape competing for a flat arena. There is no
-terrain here, no weather, and no ecology — only room, and the other plants
-taking it.
+Plants that evolve their own shape competing for a flat arena. 
 
 One self-contained `index.html` — hand-rolled WebGL2, no libraries, no build
 step, **zero network requests**. Published to GitHub Pages at
-https://donmarshworks.github.io/plants/
+https://donmarshworks.github.io/meadow/
 
-![the arena](shots/a-bigger-plants.png)
 
 ---
 
@@ -25,11 +22,6 @@ same fixed span. What decides whether a lineage persists is the **shape** it
 grows — how many branches, how far apart, at what angles, how fast, and how all
 of that changes along the plant as it ages — because shape is what claims room
 and holds it.
-
-Until September 2026 this was an ecology: five situations the plants made for
-each other, affinities for them in the genome, and a lifespan that read off the
-match. That version and what it measured are in `docs/`. It was removed so that
-the plants would be the whole subject.
 
 **Plants move.** A plant's root is fixed, but every other node can turn the
 branch that joins it to its parent, carrying everything beyond it. A joint slows
@@ -59,17 +51,6 @@ fragmentation and spores came across nearly intact. What did not come with it
 was everything that made a planet: terrain, climate, seasons, the sun, a camera,
 a sphere — and then, in a second cut, the ecology itself.
 
-Two things follow from that and shape the whole piece:
-
-- **There is no camera.** The whole arena is on screen at all times, so a node
-  is always the same size on the glass, and the trade between "many small
-  competitors" and "a few individuals you can watch" has to be made once rather
-  than deferred to a zoom. This takes the second side of it — this is an
-  aesthetic project and the plants are the point.
-- **The world has edges.** A rectangle does and a sphere does not. Growth is
-  simply refused at the frame, so a plant pressed against it loses the turns it
-  spends pushing. Nothing wraps around.
-
 ## Running it
 
 Open `index.html`. That is all — it works from `file://`, a memory stick or an
@@ -97,17 +78,6 @@ Seed plus parameters determine a world completely — nothing reads the clock an
 no genome draws from `Math.random` — so a link really is the world and not
 merely a description of it. The settings panel writes one for you.
 
-To search a space rather than look at one:
-
-```
-node tools/sweep.js life=800,1500,3000
-node tools/sweep.js --seeds 8 --ticks 20000 reseed=0 minfrag=20,50,100
-```
-
-`sweep.js` refuses to average a dead world into a mean, checks that two runs of
-one seed are byte-identical before it compares anything, and stops the frame
-loop first. All three of those are scar tissue; see `CLAUDE.md`.
-
 ## The acceptance test
 
 Two ways this genre of simulation dies: **monoculture**, where one form wins
@@ -122,19 +92,6 @@ settings across several seeds:
 
 Those two lines are drawn on the graphs, and `npm run verify` fails the build on
 them. Everything else in the readout is description.
-
-At the first run after the ecology was removed (2026-09-16), four seeds and
-12,000 ticks: evenness 0.54–0.63, nothing extinct, and the biggest bin
-0.45–0.54 — two of the four seeds a hair over the line. The population
-converges on capacity 4–5 and a mid-range step, which is a fact about the world
-and not about the projection. Whether the gate moves or the world does is an
-open decision.
-
-## The window never reshapes the world
-
-![a square window](shots/d-square-window-letterbox.png)
-
-Same arena, same plants, bars added. Verified at four window shapes.
 
 ## Documents
 

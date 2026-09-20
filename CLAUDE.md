@@ -1,12 +1,13 @@
 # Meadow
 
-The app is called **Meadow**; the project, the repository and the URL are still
+The app is called **Meadow**, and so are its GitHub repository and its URL; the
+local project folder is still
 `plants`.
 
 Plants that evolve their own shape competing for a flat 16:9 arena. One
 self-contained `index.html` — hand-rolled WebGL2, no libraries, no build step,
 **zero network requests**. Published to GitHub Pages at
-https://donmarshworks.github.io/plants/
+https://donmarshworks.github.io/meadow/
 
 **This is an aesthetic project.** The plants are the point. When a choice is
 between a more legible individual plant and a marginally better diversity
