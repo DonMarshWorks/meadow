@@ -140,7 +140,7 @@
      controls go too. The selection badge STAYS (Don, 2026-09-19): it only shows
      while a plant is pressed, and a press that answers nothing reads as broken. */
   body.bare #hud .corner.tl, body.bare #hud .corner.bl, body.bare #hud .corner.br,
-  body.bare .speeds, body.bare #pins, body.bare #perf,
+  body.bare .speeds, body.bare #pins,
   body.bare .ctrls > :not(#hide){display:none !important}
   body.bare #hide{opacity:.6}
   body.bare #hide:hover, body.bare #hide:focus-visible{opacity:.9}
@@ -5895,7 +5895,7 @@ function frame(now){
 
   lastFrameMs = performance.now()-fStart;
   PERF.frames++;
-  if(PARAMS.perf>0) showPerf(now);
+  if(perfOn) showPerf(now);
 }
 let hudAccum = 0;
 
@@ -5907,6 +5907,35 @@ let hudAccum = 0;
    and both were true of their own window. */
 const perfEl = document.getElementById("perf");
 let perfT0 = 0;
+/* Its own switch and not PARAMS.perf, which only says how the page OPENED:
+   writeHash names every parameter that differs from its default, and a
+   diagnostic turned on from a sofa would ride along in every shared link.
+   Switched by P, by the rewind and fast-forward keys of a remote, and by five
+   presses inside three seconds in the top left quarter of the window, where
+   it appears — a streaming stick has no keyboard to type #perf=1 with, and
+   which of its keys reach a page at all is not known until it is tried, which
+   is why the overlay's last line says what key arrived. */
+let perfOn = PARAMS.perf>0, lastKey = "none yet";
+function setPerf(v){
+  perfOn = !!v; perfT0 = 0;
+  if(!perfOn) perfEl.classList.remove("on");
+  else {
+    perfEl.classList.add("on"); perfEl.textContent = "measuring";
+    /* the counters run whether or not anyone is looking, so the first window
+       after switching on would report everything since the page opened */
+    PERF.frames=0; PERF.sim=0; PERF.sheet=0; PERF.draw=0; PERF.ticks=0;
+    PERF.bghost=0; PERF.bsort=0; PERF.bemit=0; PERF.supload=0; PERF.sheets=0;
+    PERF.wsim=0; PERF.wsheet=0; PERF.wdraw=0;
+  }
+}
+const perfTaps = [];
+addEventListener("pointerdown", e=>{
+  if(e.clientX > innerWidth*0.25 || e.clientY > innerHeight*0.25){ perfTaps.length=0; return; }
+  const t = performance.now();
+  perfTaps.push(t);
+  while(perfTaps.length && t-perfTaps[0] > 3000) perfTaps.shift();
+  if(perfTaps.length >= 5){ perfTaps.length=0; setPerf(!perfOn); }
+}, {capture:true, passive:true});
 function showPerf(now){
   perfEl.classList.add("on");
   PERF.wsim   = Math.max(PERF.wsim,   PERF.sim);
@@ -5923,7 +5952,8 @@ function showPerf(now){
     "  ghost "+PERF.bghost.toFixed(1)+"  sort "+PERF.bsort.toFixed(1)+"  emit "+PERF.bemit.toFixed(1)+"  up "+PERF.supload.toFixed(1),
     "draw   "+(PERF.draw/f).toFixed(1)+" / "+PERF.wdraw.toFixed(1)+"      "+PERF.sinst+" instances",
     "nodes  "+liveN+" live  "+woodN+" wood  "+comps+" plants",
-    GLINFO
+    GLINFO,
+    "key    "+lastKey
   ];
   perfEl.textContent = L.join("\n");
   simRate = PERF.ticks*1000/(now-perfT0);
@@ -5974,11 +6004,14 @@ document.querySelectorAll(".sp").forEach(b=>{
   });
 });
 addEventListener("keydown", e=>{
+  lastKey = e.key+"  code "+(e.code||"-")+"  "+e.keyCode;
   if(e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if(e.key==="MediaPlayPause"){ setPaused(!paused); return; }
   if(e.key===" "){ e.preventDefault(); setPaused(!paused); }
   if(e.ctrlKey || e.metaKey || e.altKey) return;
   if(e.key==="h" || e.key==="H") setBare(!bare);
   if(e.key==="f" || e.key==="F") toggleFull();
+  if(e.key==="p" || e.key==="P" || e.key==="MediaRewind" || e.key==="MediaFastForward") setPerf(!perfOn);
 });
 
 /* ---- putting the interface away, and the whole screen ----
