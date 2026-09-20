@@ -971,8 +971,8 @@ const PARAMS = {
                     // not taste: it decides how many children fit around a node
                     // and how short a step may get before its own siblings
                     // start colliding. See SLOTS.
-  splo:    0.75,    // the range the step output is squashed into. The floor
-  sphi:    4.55,    // must stay above `collide` or a child lands on its parent;
+  splo:    2.90,    // the range the step output is squashed into. The floor
+  sphi:    4.45,    // must stay above `collide` or a child lands on its parent;
                     // just above it is where dense lineages start losing their
                     // outer slots, which is the self-regulation we want visible.
   grow:    90,      // bud attempts per ecology tick. Scaled from the sphere's
@@ -1004,7 +1004,7 @@ const PARAMS = {
                     // function of one sign bit and the formula is a constant
                     // wearing a program's clothes. Measured: at 1e6 three seeds
                     // in four collapsed to a single niche.
-  pmut:    3.90,    // expected point mutations on the program at a bifurcation
+  pmut:    4.80,    // expected point mutations on the program at a bifurcation
   hot:     1.00,    // how much harder mutation hits at tick zero, decaying to
                     // 1 over `anneal` ticks. The genome has to find a strategy
                     // in a very large space, and small incremental steps may
@@ -1231,7 +1231,7 @@ const PARAMS = {
                     // parenthood passes round; 0 = kills accumulate for life
   nursery: 800,     // ticks a founded plant is hard all over, so that it cannot be
                     // felled before it has established. 0 = no protection.
-  aggression: 0.05, // what one killed node is worth in a plant's score, against
+  aggression: 0,    // what one killed node is worth in a plant's score, against
                     // one coarse cell of ground held on average over its life.
                     // 0 = only ground counts; raise it and killers breed.
   spoils:  10,      // ticks of life the striking limb gains per living node a
@@ -1267,7 +1267,7 @@ const PARAMS = {
   founders: 1,      // 1 = a founder's random program is redrawn until it could
                     // reach twice `minfrag` inside its grace; 0 = whatever
                     // comes. See founderGenome.
-  maxplants: 10,    // the most separate plants the arena holds. At or above
+  maxplants: 100,   // the most separate plants the arena holds. At or above
                     // it nothing new is seeded, by spore or by province; a
                     // body breaking apart can still push the count over, and
                     // then half the excess, smallest plants first, is
@@ -1341,15 +1341,15 @@ const PARAMS = {
   sat:     0.60,    // how saturated the colours are, 0..1. 1 is as vivid as the
                     // palette goes; lower is more muted and more lifelike.
                     // Hue and lightness are untouched, so plants stay apart.
-  alpha:   0.60,    // how much of the ground a mature node hides. Nearly
+  alpha:   0.64,    // how much of the ground a mature node hides. Nearly
                     // opaque, and the nodes made small enough to leave gaps
                     // instead: a translucent mark laid over its neighbours
                     // averages into haze and you cannot see the shape of
                     // anything, whereas small solid marks with ground between
                     // them read as structure. Coverage is bought with the leaf
                     // size range, not with opacity.
-  fatlo:   0.08,    // the smallest and largest painted leaf, per step actually
-  fathi:   0.20,    // taken. The four node forms are spread evenly across the
+  fatlo:   0.20,    // the smallest and largest painted leaf, per step actually
+  fathi:   0.37,    // taken. The four node forms are spread evenly across the
                     // range, so the two together decide how much ground and
                     // how much branching structure the foliage hides. A low
                     // knob at zero lets the smallest forms vanish entirely.
@@ -1377,7 +1377,7 @@ const PARAMS = {
   sway:    0.060,   // radians of PHASE per tick an unloaded joint may run
                     // at, so a full swing there and back takes 2π/sway
                     // ticks. 0 freezes the world where it grew.
-  freeze:  341,     // standing descendants at which a joint stops moving. At
+  freeze:  98,      // standing descendants at which a joint stops moving. At
                     // 1 only the very ends of branches move; at 500 a branch
                     // rarely stops, but its stem slows under the load.
   vmax:    0.0015,  // arena units per tick that the tip of any limb may be
