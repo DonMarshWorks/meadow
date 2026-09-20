@@ -2,8 +2,8 @@
 /* Run the same world under several settings and say which survived.
  *
  * Usage:
- *   node tools/sweep.js envcap=4,6,8,12            one dial, four values
- *   node tools/sweep.js envcap=6 minfrag=10,20,40  a dial against a dial
+ *   node tools/sweep.js life=800,1500,3000          one dial, three values
+ *   node tools/sweep.js life=1500 minfrag=10,20,40  a dial against a dial
  *   node tools/sweep.js --seeds 4 --ticks 20000 step=0.02,0.026
  *
  * Four rules this harness exists to obey, every one of them learned the hard
@@ -53,7 +53,7 @@ for (let i = 0; i < argv.length; i++) {
   dials[m[1]] = m[2].split(',').map(s => s.trim());
 }
 if (!Object.keys(dials).length) {
-  console.error('nothing to sweep. try: node tools/sweep.js envcap=4,6,8,12');
+  console.error('nothing to sweep. try: node tools/sweep.js life=800,1500,3000');
   process.exit(2);
 }
 
@@ -86,10 +86,9 @@ async function run(browser, arm, seed) {
     return {
       live: p.live, wood: p.wood, bodies: p.bodies,
       mean: p.meanBody, largest: p.largestBody,
-      even: p.evenness, top: p.topStrategy,
-      strategies: p.strategies, spec: p.specialisation,
-      mixed: p.body && p.body.mixedShare,
-      fit: p.meanFit, where: p.where,
+      even: p.evenness, top: p.topForm, hues: p.forms,
+      mixed: p.body && p.body.mixedCapBodies,
+      fanSD: p.body && p.body.fanSD, stepSD: p.body && p.body.stepSD,
       nonFinite: p.nonFinite,
       hash: window.__world.instHash().hash,
     };
@@ -100,7 +99,8 @@ async function run(browser, arm, seed) {
 }
 
 /* ---- the acceptance test ----
-   Two lines and both must hold. Everything else in the report is description. */
+   Two lines and both must hold, measured over five hue bins of the phenotype
+   (see verify.js). Everything else in the report is description. */
 const alive  = s => s.live > 0 && s.bodies > 0;
 const passes = s => alive(s) && s.even >= 0.45 && s.top <= 0.50;
 
@@ -140,8 +140,7 @@ const passes = s => alive(s) && s.even >= 0.45 && s.top <= 0.50;
       arm: label(arm), dead, n: live.length,
       even: mean('even'), top: mean('top'), liveN: mean('live'),
       bodies: mean('bodies'), meanB: mean('mean'), largest: mean('largest'),
-      strat: mean('strategies'), spec: mean('spec'), fit: mean('fit'),
-      gap: live.length ? live.reduce((a2, r) => a2 + r.where.gap, 0) / live.length : NaN,
+      mixed: mean('mixed'), fanSD: mean('fanSD'), stepSD: mean('stepSD'),
       pass: live.filter(passes).length,
       nonFinite: runs.reduce((a2, r) => a2 + (r.nonFinite || 0), 0),
     });
@@ -153,14 +152,14 @@ const passes = s => alive(s) && s.even >= 0.45 && s.top <= 0.50;
   const rpad = (s, n) => String(s).padStart(n);
   console.log(pad('arm', 26) + rpad('even', 6) + rpad('top', 6) + rpad('pass', 6) +
               rpad('dead', 6) + rpad('live', 8) + rpad('plants', 8) + rpad('meanB', 7) +
-              rpad('largest', 8) + rpad('strat', 7) + rpad('gap', 6) + rpad('fit', 6));
+              rpad('largest', 8) + rpad('mixed', 7) + rpad('fanSD', 7) + rpad('stepSD', 8));
   console.log('-'.repeat(100));
   for (const r of rows)
     console.log(pad(r.arm, 26) + rpad(f(r.even), 6) + rpad(f(r.top), 6) +
                 rpad(r.pass + '/' + r.n, 6) + rpad(r.dead || '', 6) +
                 rpad(f(r.liveN, 0), 8) + rpad(f(r.bodies, 0), 8) + rpad(f(r.meanB, 0), 7) +
-                rpad(f(r.largest, 0), 8) + rpad(f(r.strat, 1), 7) +
-                rpad(f(r.gap), 6) + rpad(f(r.fit), 6));
+                rpad(f(r.largest, 0), 8) + rpad(f(r.mixed), 7) +
+                rpad(f(r.fanSD), 7) + rpad(f(r.stepSD, 4), 8));
 
   const bad = rows.filter(r => r.nonFinite);
   if (bad.length) {
@@ -172,6 +171,6 @@ const passes = s => alive(s) && s.even >= 0.45 && s.top <= 0.50;
     console.log('\nEXTINCTIONS (not averaged into anything above):');
     for (const r of died) console.log('  ' + r.arm + ': ' + r.dead + ' of ' + (r.dead + r.n) + ' seeds');
   }
-  console.log('\npass = seeds with evenness >= 0.45 and biggest strategy <= 0.50');
+  console.log('\npass = seeds with form evenness >= 0.45 and biggest hue bin <= 0.50');
   await browser.close();
 })();

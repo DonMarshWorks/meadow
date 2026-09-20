@@ -1,8 +1,8 @@
-# Plants
+# Meadow
 
 Plants that evolve their own shape competing for a flat arena. There is no
-terrain here and no weather — the only environment is each other, and it never
-stops moving.
+terrain here, no weather, and no ecology — only room, and the other plants
+taking it.
 
 One self-contained `index.html` — hand-rolled WebGL2, no libraries, no build
 step, **zero network requests**. Published to GitHub Pages at
@@ -19,41 +19,45 @@ in continuous position, and every one of them carries a short program that
 decides how it grows. They compete for room, they age, they die from the middle
 outward, and the pieces that break off go on as plants in their own right.
 
-Nothing about a spot is decided before the plants arrive. What makes one place
-different from another is **what is already growing there** — and that turns out
-to be enough, because it is the one kind of environment that cannot settle down.
+Nothing about a spot is decided before the plants arrive, and nothing about it
+is decided after, either: a spot is free or it is taken. Every node lives the
+same fixed span. What decides whether a lineage persists is the **shape** it
+grows — how many branches, how far apart, at what angles, how fast, and how all
+of that changes along the plant as it ages — because shape is what claims room
+and holds it.
 
-There are five ways to make a living, and they are the five things a patch of
-ground can be:
+Until September 2026 this was an ecology: five situations the plants made for
+each other, affinities for them in the genome, and a lifespan that read off the
+match. That version and what it measured are in `docs/`. It was removed so that
+the plants would be the whole subject.
 
-| niche | a living |
-|---|---|
-| **gap** | open ground — pioneers race into it and suffocate when it closes |
-| **clone** | a plant's own tissue — dense mats, but a founder standing alone has almost none of it and must survive on very little until its second node arrives |
-| **kin** | other plants running the same strategy — stands rather than solitaries |
-| **rival** | contested borders, pressed up against strangers |
-| **wood** | standing dead heartwood — living on what the others leave behind |
+**Plants move.** A plant's root is fixed, but every other node can turn the
+branch that joins it to its parent, carrying everything beyond it. A joint slows
+under what it carries, so tips keep moving at any age, stems settle, and a
+long limb is swung slowly whatever it weighs. A branch swings
+only so far either side of the angle it grew at, slowing into each limit and
+turning back, since a plant bends and does not spin. The program
+decides which way to turn and can feel where the nearest other plant is. When
+two plants touch, the faster node wins and the slower is cut, losing everything
+beyond the point of contact, and the branch that struck lives longer for it, except that the core of a plant, its first ten
+generations from the root, is hard and cuts whatever strikes it, and so is any
+branch carrying a couple of hundred nodes; a plant may pass through itself. Reach is a weapon and a liability at
+once, and what a lineage makes of that is up to it.
 
-Those five make each other. Pioneers fill open ground, which makes crowding,
-which is what a thicket-builder wants; a thicket ages into dead wood, which is
-what the wood-dwellers want; the wood rots through and the gap is back. That is
-succession, and it is written nowhere — it is what those five definitions do
-when you leave them alone.
-
-**Colour is information, not decoration.** Hue says which of the five a lineage
-is built for; saturation says how committed it is, so generalists wash out
-toward grey. The picture is therefore a map of what every patch is doing, and
-the same colour appearing twice in similar places is convergent evolution rather
-than a coincidence.
+**Color is ancestry.** Every new plant is born with a hue of its own, chosen
+to stand apart from the plants already there, and passes it down; each branching may shift it a little, so a
+lineage's color drifts as it evolves and a piece that breaks off keeps the color
+of the plant it came from. Saturation says how sharply a node turned from its
+parent, so a straight vine is grey and a wide fan is vivid. Lightness says age:
+new growth is pale and darkens over its life.
 
 ## Where it came from
 
 This is the evolving-plants half of [Aetheris](https://github.com/DonMarshWorks/aetheris),
-lifted off the planet it grew on. The ecology — the genome, the formulas, fit,
-heartwood, fragmentation, spores, the census — came across nearly intact. What
-did not come with it was everything that made a planet: terrain, climate,
-seasons, the sun, a camera, a sphere. In their place the plants supply their own
-environment.
+lifted off the planet it grew on. The genome, the formulas, heartwood,
+fragmentation and spores came across nearly intact. What did not come with it
+was everything that made a planet: terrain, climate, seasons, the sun, a camera,
+a sphere — and then, in a second cut, the ecology itself.
 
 Two things follow from that and shape the whole piece:
 
@@ -96,7 +100,7 @@ merely a description of it. The settings panel writes one for you.
 To search a space rather than look at one:
 
 ```
-node tools/sweep.js envcap=1,2,3,4,5
+node tools/sweep.js life=800,1500,3000
 node tools/sweep.js --seeds 8 --ticks 20000 reseed=0 minfrag=20,50,100
 ```
 
@@ -106,19 +110,25 @@ loop first. All three of those are scar tissue; see `CLAUDE.md`.
 
 ## The acceptance test
 
-Two ways this genre of simulation dies: **monoculture**, where one strategy wins
-and diversity goes to zero, and **extinction**. The piece passes if, on the
-default settings across several seeds:
+Two ways this genre of simulation dies: **monoculture**, where one form wins
+and diversity goes to zero, and **extinction**. Diversity is measured on the
+color arc: hue is a fixed projection of the phenotype, cut into five bins, and
+the living nodes are counted into them. The piece passes if, on the default
+settings across several seeds:
 
-- niche evenness stays **above 0.45**
-- no single strategy holds **more than half** the world
-- all five niches stay occupied, and nothing goes extinct
+- form evenness stays **above 0.45**
+- no single hue bin holds **more than half** the world
+- nothing goes extinct
 
 Those two lines are drawn on the graphs, and `npm run verify` fails the build on
 them. Everything else in the readout is description.
 
-At the shipped defaults, across four seeds and 12,000 ticks: evenness 0.83–0.85,
-biggest strategy 0.26–0.32, all five niches occupied, nothing extinct.
+At the first run after the ecology was removed (2026-09-16), four seeds and
+12,000 ticks: evenness 0.54–0.63, nothing extinct, and the biggest bin
+0.45–0.54 — two of the four seeds a hair over the line. The population
+converges on capacity 4–5 and a mid-range step, which is a fact about the world
+and not about the projection. Whether the gate moves or the world does is an
+open decision.
 
 ## The window never reshapes the world
 
@@ -138,3 +148,22 @@ Same arena, same plants, bars added. Verified at four window shapes.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## How plants breed
+
+Every plant is scored on the ground it has covered, averaged over its life, plus
+the enemy nodes it has killed, weighted by the Aggression setting. When a plant
+that was above the lowest quartile by area dies, a new one grows where its root
+stood: one time in four a random program, otherwise the child of the two most
+unlike each other among the five best-scoring plants. The stronger gives its
+program and the weaker overwrites a contiguous stretch of it, half when they
+score alike, never less than a tenth. The child's color and leaf are its own, chosen to stand apart
+from the plants already there.
+When there are more plants than the target, the one cleared is the oldest of
+those covering the least ground, so nothing needs a grace period.
+
+## Credits
+
+The ground under the plants is a photograph of moss and soil by Liam Briese, from
+Unsplash (`UYMZ2Fw-OaM`), cropped to 16:9, scaled to 1600x900 and embedded in
+`index.html` as a data URI so the page still makes no requests.

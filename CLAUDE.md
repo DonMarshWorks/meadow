@@ -1,4 +1,7 @@
-# Plants
+# Meadow
+
+The app is called **Meadow**; the project, the repository and the URL are still
+`plants`.
 
 Plants that evolve their own shape competing for a flat 16:9 arena. One
 self-contained `index.html` — hand-rolled WebGL2, no libraries, no build step,
@@ -69,16 +72,25 @@ schedules the loop with its own rAF call, and that is the call being dropped.
 ## Invariants — do not break these
 
 1. **Zero external requests.** No CDN, no web fonts, no fetched images. The
+   ground photograph is embedded as base64 (`BG_B64`, about 250KB, in short
+   lines with slashes written as underscores so the static scanner never sees
+   a comment opener): a separate image file cannot become a WebGL texture
+   when the page is opened off a disk, because a file page has no origin. The
    favicon is an inline SVG data URI. `verify.js` fails the build if anything
    leaves the origin.
 2. **It must not degenerate.** Over a run, on the default settings, across
-   seeds: niche evenness above **0.45**, no single strategy above **0.50** of
-   the world, all five niches occupied, nothing extinct. This is the entire
-   point of the piece and `verify.js` gates on it.
+   seeds: form evenness above **0.45**, no single form bin above **0.50** of
+   the world, nothing extinct. Form is capacity and step cut into five bins
+   (`formOf`); it used to be painted as hue and is now only counted. `verify.js` gates on it. As of 2026-09-16 two of four
+   seeds sit at 0.51 and 0.54 on the second number; see the README.
 3. **The arena is 16:9 at every window shape**, centred, with black bars
    outside it. The world is never reshaped by the window.
 4. **Adaptive resolution** must keep it near 60fps; it lowers DPR when frames
    are slow. Don't add unconditional per-fragment cost.
+   The H key and the eye button put the whole interface away (`body.bare`),
+   leaving one faint button to bring it back, because a touch screen has no H
+   key; `ui=0` opens that way. F and the bracket button ask for full screen,
+   and the button is not offered where the browser will not give it.
 5. **Page must never zoom or scroll.** The interface stays a fixed size. See
    the input notes below.
 
@@ -94,26 +106,78 @@ unit direction and stepping is `p + h·d`. The sphere this descends from needed
 geodesics, re-normalisation, parallel transport, a wrapping seam and a pole
 guard, and all five went with the curvature.
 
-**The environment is the other plants.** `probeAt` measures what is standing
-within 1.5 collision radii of a point and splits it five ways — gap, clone, kin,
-rival, wood — summing to one. Fit is the genome's five affinities dotted with
-those, exactly as it was against the planet's biomes, and lifespan reads off fit.
-This is what replaces the climate, and the argument for it is that it is the one
-environment that cannot settle down: each of the five niches is manufactured by
-the plants living in the one before it.
+**There is no environment.** A spot is free or it is taken, and `blockedBy`
+over nine collision bins is the whole of that question — it is the hottest
+loop in the program at roughly two thousand calls a tick. Every node lives
+`life` ticks, set once at birth. Until 2026-09-16 a census of the neighbours
+was fused into that loop, split five ways into niches, and lifespan read off
+the genome's affinities for them; Don removed all of it so that shape is the
+only thing selection acts on. Note what went with it: pace used to be paid for
+in lifespan and now costs nothing. Wood lives in a *second* bin map: it must
+not be in the collision bins, because heartwood left there walls a body off
+from its own dead interior, but it is still standing and still drawn.
 
-**The probe is fused with the collision test** because they read the same nine
-bins, and it is the hottest loop in the program at roughly two thousand calls a
-tick. Wood lives in a *second* bin map: it must not be in the collision bins,
-because heartwood left there walls a body off from its own dead interior, but it
-is still standing and still one of the five things a place can be.
+**The genome** is a fixed-length linear program — 48 instructions (24 until
+2026-09-18) over a fixed read space, plus four evolved constants — with seven
+outputs: capacity, spread, pace, vigour, angle, turn, mem. `mem` writes a
+per-node register (`NMEM`) that comes back as the `mem` input: written only on
+the node's regular look, held to ±2 unsquashed so `mem <- mem` holds, and
+inherited from the parent at birth. It is what lets a node do things in order.
+At 24 instructions programs used 5 to 9 and the count fell over a run, so
+length was never the constraint. The first three are read once at birth so a body is a
+permanent record of the conditions each of its nodes grew through; vigour and
+angle are re-read every look. Thirteen operators, the last of them XNOR, which
+is 1 when both operands are on the same side of zero. Sixteen inputs: one,
+age, depth, x, y, used, pcap, crowd, slot, wall, foe, foed, zig, wave, mem, self — zig
+and wave oscillate with depth so a zigzag or a sinusoid is one mutation away,
+because arcs were and waves were not, and selection only ever found arcs. Mutation is minted at
+bifurcations, not per node, so a sector stays a coherent unit for selection to
+act on.
 
-**The genome** is a fixed-length linear program — 24 instructions over a fixed
-read space, plus four evolved constants — with ten outputs: capacity, spread,
-pace, vigour, angle, and the five affinities. The first three are read once at
-birth so a body is a permanent record of the conditions each of its nodes grew
-through; vigour is re-read every look. Mutation is minted at bifurcations, not
-per node, so a sector stays a coherent unit for selection to act on.
+**Movement.** Since 2026-09-17 a node is not where it grew. A root is fixed;
+every other node owns the live angle of the branch to its parent (`NLA`), and
+turning it swings everything below. The turn rate comes from a sixth genome
+output, `turn`, scaled by `1 - NDESC/freeze` (standing descendants, recounted
+each movement step) so tips move at any age and stems freeze under load —
+age was tried first and froze whole old plants, which is what the screen is
+mostly made of — and capped at `vmax` divided by the joint's lever (its step
+plus its subtree's reach, `NREACH`) so a long limb turns slowly whatever. A
+joint is an oscillator: `turn` drives the rate and sign of a phase `NPH` and
+the lean is `bend·sin(NPH)` about the angle it grew at (`NANG`), so it slows
+into each extreme and reverses on its own. Two earlier versions are worth not
+repeating: unbounded angles made young plants spin like bearings, and a hard
+clamp made every plant lean to the stop and freeze there (Don, 2026-09-17).
+Roots do not turn at all.
+`movePlants` runs every `mstep` ticks: it builds child lists, walks each body
+root to tip rewriting position, heading, rotation and branch midpoint, rebins
+what crossed a cell, and then tests every node that has moved a tenth of a
+radius since it was last tested against the living nodes of *other* plants.
+Of two that touch, the faster (displacement on the last step, `NV`) survives
+and the slower is cut — `sever` marks the node and everything below it; equal
+speeds cut both. A node within `core` generations of its root is hard and beats
+anything softer regardless of speed: the core barely moves, so under the speed
+test alone it lost every contact and a twig sweeping past the base felled the
+plant. A node carrying `hard` standing descendants (`NDESC`) is hard as well:
+ten generations did not cover a trunk, and one cut at depth 26 took 4,408 of
+5,704 nodes. That caps a single cut near `hard` nodes; the depth rule stays
+for small plants, which have no heavy limbs. Two hard nodes are a standoff and
+neither is cut (`overlapScan` reports them as `hardPairs`); speed between them
+felled whole plants.
+A plant may pass through itself, and so when it splits its pieces are standing
+inside each other: a pair of one lineage already inside the radius at its
+previous test is in a truce, not a collision, until the two part (`nearestFoe`'s `px,py`).
+Without it a split was a massacre — 2,854 nodes doomed in one measured tick —
+which also killed the offspring reproduction depends on. `overlapScan` reports
+such pairs as `kinPairs` and asserts only across lineages. Two inputs feed strategy: `foe`, the sine of
+the bearing to the nearest node of another plant, and `foed`, how near it is.
+Wood does not turn but is carried. Nodes may be carried past the edge; a node
+outside, or a child that would land outside, cannot bud.
+
+Consequences to keep in mind: the instance buffer is dirty on every movement
+step, so the sliced rebuild is effectively continuous; `instHash` still says
+a sliced build equals a whole one but no longer says the picture is unchanged
+between ticks; `overlapScan` counts only pairs from *different* plants; and
+`wallScan` asserts only that roots are inside.
 
 **Heartwood.** A node that dies still holding children stops growing, stops
 counting as alive, and stays in the tree as structure. It is released when its
@@ -121,11 +185,141 @@ last child goes, or when its rot clock expires. Without it, ageing alone split a
 fifth of all deaths into separate bodies and nothing could grow past about ten
 nodes; with it, mean body size went from 10.7 to 508 on the sphere.
 
+**Founders are screened.** A random founder's program is redrawn until a
+REHEARSAL of it — grown alone in scratch arrays for the length of its grace,
+real program, real placement and refusal rules — reaches twice `minfrag`
+(`branches`, `founders=0` to disable). Two cheaper tests passed nearly
+everything: trusting the capacity asked for, and counting siblings that fit
+round one node. Most random programs fail it, on pace as often as on
+branching, since pace is free and a slow program is simply worse. It matters
+because the opening now seeds only `maxplants` founders; unscreened, ten seats
+were held a thousand ticks each by things that could never be plants and worlds
+sat at thirty nodes for eight thousand ticks.
+
+**Score, death and sexual reproduction (2026-09-19).** A plant's score is its
+area averaged over its life plus `aggression` × its kills. Area is ground, not
+nodes: distinct cells of a coarse grid (`ACELL`, three steps), found exactly by
+sorting one key per living node (`scoreBodies`). Kills are credited in `spoil`,
+so only to the faster node of a contact, never to a core that stood still.
+The record follows the BODY, not the root index, exactly as `BFOUND` does:
+nodes carry their body's record as of the last sweep (`NAS`, `NAN_`, `NKL`), and
+when a root rots the largest piece is the same plant and keeps it (`HEIR`); the
+other pieces are new plants with none.
+Nothing is judged on node count and nothing has a grace period. While there
+are more plants than `maxplants`, half the excess goes per sweep, each the
+OLDEST plant in the lowest quartile by area (`chooseTheOldest`) — oldest, so a
+newborn is never the one taken. One floor remains: a scrap under 8 nodes that
+is a fragment, or is over 400 ticks old, is debris and is cleared unranked,
+because without it the quartiles are quartiles of dust.
+When a plant dies that was above the lowest quartile (`rebirths`: standing last
+sweep, neither standing nor carried on by an heir now), a new one is founded (see open space, below). One in four is a random program, screened
+as any founder is. Otherwise it is the child of two of the top five by score,
+the pair whose programs differ most (`genomeGap`): the stronger's genome whole,
+with one contiguous run of the weaker's instructions copied over it IN PLACE —
+positions carry the wiring in a linear program — of length
+`max(0.10, 0.5 × weak/strong)` of the program. Its hue is FRESH (`freshHue`, the widest gap standing), as are its leaf shape
+and its tone. Mixing the parents' hues was tried and fails when it matters: the
+best plants are often close in hue, and a run went one green. Rot pieces keep
+their parent's look; births are what bring new ones.
+Measured: about 35 such deaths per 16,000 ticks, three quarters of the
+births sexual. A founded plant is hard all over for `nursery` ticks (`isHard`), because a
+child born as one node into a full arena was felled before it established.
+When a plant comes apart only its LARGEST piece is kept, the old root's
+remainder counting as a piece (`FRAGDOOM`, death-log reason `piece`;
+`keepfrag=1` restores the old way). Rot was making thirty plants for every
+birth, all with the parent's leaf and hue. With nothing else adding plants,
+an empty seat is filled by a birth, one a sweep, at the roomiest of a dozen
+points (`bornVacancy`).
+The cull of the oldest in the lowest quartile is PERIODIC, one every
+`cullevery` ticks whatever the count; tied to excess it never ran once pieces
+stopped being kept, and the ten opening plants lived for ever.
+Wood about to rot through, with the smaller part of the plant beyond it, does
+not sever: that part is rewound toward the plant while the wood still shows
+(`sever(i,"rot")` from `reap`), so it never hangs loose. Only when the far side
+is the larger does the plant split, and then the near side is the piece cleared.
+Every birth goes in the middle of the largest OPEN SPACE (`openSpace`): cells
+of the coarse grid holding a living node are marked, a breadth-first pass
+gives each empty cell its distance to the nearest occupied one, walls counting
+as occupied, and the farthest cell is planted. It was the dead plant's root,
+in the thick of the fighting.
+Both parents' kill counts are cleared when they breed (`killreset`), so the turn
+passes round; area, a lifetime average, is left alone.
+Spores are off (`spore` = 0) and seeding only restarts a world
+under half its plants. `plants().breeding` reports all of it.
+What went: the `minfrag` size bar and its grace, the juvenile quota and the
+largest-family-first cull; `minfrag` survives only as the bar a founder's
+rehearsal must clear. The plant count still runs at two to three times
+`maxplants`, because rot makes plants faster than half-the-excess clears them.
+
+**Self-shade.** A plant may fold through itself, and did, more and more: size,
+hardness and the plant limit all count nodes, so a ball beats the same plant
+spread out. It is discouraged, not outlawed. `nearestFoe` also counts the
+node's own plant within the collision radius (`FOE_OWN`; budding never places
+one that close, so each got there by folding). The `self` input reports it and
+each look takes `shade` ticks of life per tick per such neighbour, up to four.
+Tips only: charged to every node it killed plant interiors, which rotted
+through and shattered the plant (74 plants at a limit of 10).
+`overlapScan().ownPairs` is the measure. The principled fix — size as ground
+covered, not nodes — is deferred to arrive with sexual selection, which needs
+an area measure anyway.
+
+**The spoils.** The faster node of a cut earns its limb life: the striking
+node and every ancestor to the root gain `spoils` ticks per living node taken,
+capped at twice `life` (wood on the path up to twice `rot`). A hard node that
+was standing still defended and earns nothing. Nothing extra is taken from the
+loser — that was proposed and declined, because it feeds the one-family
+takeover. Before this, winning paid nothing. `plants().spoils` reports kills,
+life given and node speeds.
+
+**Dying back.** What is dying is carried by its plant but does not turn
+(`setTurn`); it was frozen in place once, and a retracting limb came away from
+the plant and withdrew into empty air. A ghost likewise follows its parent
+while the parent stands (`g+28`, `g+29`): its curve is shifted by the parent's
+movement since the death and it retracts toward the parent as it is now. A plant the limit or the size bar removes is killed
+whole and dims as one over `agefade`; only a cut unwinds. A limb cut at its
+base is marked (`NDYING`) and each
+node's remaining life set by its distance from the farthest tip, so it withers
+from the tips toward the wound over at most 300 ticks. Dying nodes cannot bud
+and do not count toward `PSIZE`, so a dying body is already nobody to the
+limit. Before this a single cut once freed 4,871 nodes at a stroke and big
+plants winked out inside the quarter-second fade. `deathLog()` says what took
+what. Dying is growing run backwards, in ONE smooth motion. A cut limb dies at once
+(it no longer lingers, colliding, while it dies back) and a cleared plant dies
+whole; either way the dead part is ghosts, and `scheduleRewind` gives each a
+window measured along the branches: H is the distance out to the farthest tip,
+a node's segment runs from t1·H/(H+len) to t1, and its children's t1 is its
+start. So every tip starts at zero, every branch arrives as its fork begins to
+move, and a tip travels at constant speed through the nodes. Progress in a
+window is LINEAR and the ease is on the whole clock (`emitGhost`); easing each
+segment, and scheduling by depth, is what made the old one step. The dying
+part rides whatever living thing it hangs from (`NTAN`, ghost slots 28-32), all
+of it shifted by the same amount. `retspeed`, `retcut`, `retall`, `retage`.
+
 **Rendering** is instanced quads straight to the default framebuffer through an
 orthographic transform, with the letterbox done by `gl.viewport` and a scissored
 clear. There is no sheet texture, no mipmap, no seam passes and no detail patch
 — the sphere needed all four to fold plants into a planet's albedo and to make
 zooming mean anything, and a flat arena entirely on screen needs none of them.
+
+**Branches are curves, since 2026-09-18.** One instance layout (`INST` = 14
+floats) serves leaves and branches, because both must go down in one draw to
+keep the per-plant paint order; `W.x < 0` marks a leaf. A branch is a ribbon on
+a cubic Hermite from parent to child, evaluated in the vertex shader over an
+eight-segment strip, so it is still one instance. The tangents are chosen on
+the CPU in `emitNode`, and that is where squiggles are prevented: direction is
+the bisector of the two UNIT chords at a node (so unequal segment lengths never
+enter, which is what makes a uniform Catmull-Rom overshoot), length is the
+chord's, cut to a third as the turn sharpens, and an end with nothing to bisect
+against — no grandparent, a limb frozen in dying — is straight. A TIP, which
+has no child, mirrors its start direction across the chord, so its last
+segment is a circular arc carrying the bend on; its leaf lies along that end
+direction, passed as a unit vector in `D`, so leaves cost no trigonometry.
+`NCONT` names the child that continues a branch, so a run of nodes is one
+smooth line and side branches peel off it. Half-width follows load
+(`taper`, via `NDESC`). What was last painted is kept per node (`NSG`) and a
+ghost copies it, for the reason `NSTEMA` exists. Ribbons thinner than a pixel
+are drawn a pixel wide and fainter (`uPx`). Measured: rebuild 0.78 → 1.03 ms at
+22,270 instances, same instance count. `curve=0` restores straight branches.
 
 The instance buffer is rebuilt only when the world changes, **sliced across
 frames**, while the draw happens every frame. Keeping those two clocks apart is
@@ -139,10 +333,10 @@ is dropped rather than paid later, and the HUD prints the rate actually
 achieved — never the multiplier, because on a slow machine that would be a claim
 the piece cannot keep.
 
-**Test hooks.** `window.__world` exposes `plants()`, `env()`, `arena()`,
+**Test hooks.** `window.__world` exposes `plants()`, `forms()`, `arena()`,
 `runWorld()`, `growPlants()`, `printGenome()`, `instHash()`, `params()`,
 `defaults()`, `settings()`, `pins()`, `pick()`, `selected()`, `markedBodies()`,
-`overlapScan()`, `hopScan()`, `wallScan()`, `seam()`, `paintOrder()`,
+`overlapScan()`, `hopScan()`, `wallScan()`, `stemScan()`, `seam()`, `paintOrder()`,
 `bodyDiag()`, `setSpeed()`, `setPaused()`, `debug()`. Used by `verify.js` and
 `sweep.js`. Keep them working.
 
@@ -225,6 +419,12 @@ from; the ones marked **[here]** were found in this codebase.
   anchor.** A patch script's end anchor was edited from one line to another but
   left inclusive, so `const pinnable = k => {` was eaten and its body left
   dangling. Same class as the above: valid syntax, wrong structure.
+- **[here] `--static` passing does not mean the page loads.** A `new
+  Float32Array(PMAX)` was declared beside the function that used it, which sat
+  above `const PMAX`. Valid syntax, every static check green, and a
+  ReferenceError at load that reached Don's screen. A top-level `const` sized
+  by another goes below it, and any edit that adds one is followed by a run
+  that loads the page, not only by `--static`.
 - **A leftover function declaration silently wins**, because declarations hoist
   and the last one wins. Grep for duplicate definitions first; `verify.js` does.
 - **Capture the defaults before the hash is applied, not after.** The settings
@@ -254,12 +454,74 @@ from; the ones marked **[here]** were found in this codebase.
 - **Small solid marks with ground between them read as structure; translucent
   ones laid over each other average into haze.** Coverage is bought with the
   leaf size range, never with opacity.
-- **Colour must stay a fixed projection of the genome**, never a per-lineage
-  palette. Hue says which niche, saturation says how committed, lightness
-  carries the life-history axis. Per-lineage jitter destroys all of it, and with
-  it the ability to see convergent evolution at all.
-- **Red and magenta are reserved** — the selection highlight and the size ring.
-  An annotation the world can produce on its own is not an annotation.
+- **Hue is ancestry, not form, since 2026-09-17.** A founder takes the middle
+  of the widest gap between the hues already standing (`freshHue`; drawn at
+  random, unrelated plants kept looking alike),
+  descendants inherit it, bifurcations nudge it by `huedrift` (tiny: it
+  compounds, and at 0.03 one plant ran green to orange to teal), and a piece
+  that splits off steps `fraghue` round the wheel. That step is painted over
+  `hueease` ticks, not at once (`NHOWE`): the genome changes on the sweep, the
+  paint runs behind. `NHUE` is a position on a
+  twelve-stop perceptual wheel (`wheelDeg`), not an HSL angle, a third of
+  which is green. Saturation is
+  still the turn and lightness is now age. The old rule — hue as a fixed
+  projection of capacity and step, so convergent evolution was visible — was
+  dropped by Don because a few dozen plants mostly in one green band were not
+  telling anyone anything; the form projection survives as `formOf`, which
+  the diversity gate counts, and is simply not painted. Never colour from the
+  program's bytes: an address changing by one is not a small change.
+- **Shapes are evened out by area** (`LEAFFIT`): all are drawn in one square
+  and a heart fills two thirds of it where a maple fills under a third, so
+  hearts looked twice the size. Line shapes are left alone.
+- **A leaf's drawn direction EASES toward its target** over 45 ticks, by the
+  clock (`NLDX/NLDY/NLDT`), and a leaf handed to a first child starts from the
+  parent's. The target still jumps — by the whole bud angle at a handover —
+  and drawn raw that was a one-frame rotation at every growing tip. A budding
+  branch's curve end likewise eases from the tip's arc to the bisector over
+  the child's sprout.
+- **Leaves roll** about their length in time with their joint's phase (`NPH`,
+  `leafRoll`, `roll`): narrower and a little dimmer edge-on. Per node per
+  rebuild, not per fragment.
+- **Tangents fade with the turn, they are not a plain bisector.** At a turn
+  near 180 degrees, which a saturated angle output makes common, the incoming
+  and outgoing directions cancel and their sum flips side as the joint sways;
+  the curve and its leaf flipped with it. The incoming direction is weighted
+  by how far the two agree and is gone by 90 degrees.
+- **A plant has a tone** beside its hue (`NTL`, `NTS`): a lightness offset of
+  ±0.11 and a saturation multiplier of 0.55 to 1.2, drawn once by whatever
+  founds it and copied exactly. It shifts the whole band; lightness still says
+  age and saturation still says turn.
+- **Nothing is reserved.** The selection highlight is a lift toward white.
+  (Red was the highlight and magenta the size ring; both went 2026-09-17.)
+- **Twelve leaf shapes** (lance, spade, heart, clover, needles, fern, aspen,
+  wheat, dandelion, oak, maple, horse chestnut; shape 0, the plain disc, is retired but its number is
+  kept), a gene (`NSHAPE`): copied exactly within a plant and to
+  the pieces that rot off it, and chosen fresh — unused among the largest
+  plants standing where possible — by a founder or a spore (`freshShape`). Drawn
+  in the fragment shader by `leafQ` (`leafshape=7` shows one shape on every
+  plant), no trigonometry per fragment. All but
+  round, clover and dandelion are drawn ahead of the node, base on it. At the default
+  leaf size a leaf is a pixel or two and the shape cannot be seen; it needs the
+  leaf-size dial turned up.
+- **Only tips carry leaves, and a branch grows forward with its leaf.** A new
+  node is drawn starting on its parent and slides to its real place over
+  `sprout` ticks (`drawPos`; drawing only, it collides from its real place at
+  once). The first child of a tip is handed the tip's leaf as it was that tick
+  — width, darkness, colour (`NLW0`, `NLD0`, `NC0`) — and eases to its own, and
+  does not fade in. Before this a leaf shrank on one node while another grew
+  on the next, at every tip at once, and that was sparkle. A node that loses
+  its last child reopens a leaf over 60 ticks (`NLKAT`).
+- **A leaf's size is its age** (2026-09-18): born at `fatlo`, full at `fathi` by
+  70% of the node's life, then CLOSING — shrinking smoothly to nothing, and
+  dimming part way — by 80% (it used to go black and be removed, which is a
+  pop against the photograph), so the last
+  fifth of a node's life is bare branch. `leafLook` is the one function for the
+  living leaf and its ghost. Form classes still set leaf aspect, not size. A
+  per-plant scale (`NLSC`, 0.5 to 1.5) is part of the genome: drawn by a
+  founder, copied exactly within a body, nudged only when a spore founds a
+  plant.
+  The kill reward lengthens a life, so a rewarded limb's leaves step back a
+  little in size and one that had dropped can return.
 - **Draw order must be per plant and stable.** One plant may legitimately stand
   over another; what it may not do is change which, between frames. Key it on a
   lineage id minted by the founder and inherited, never on the body's root — a
@@ -295,14 +557,14 @@ cards, button labels, the README and these documents. Comments inside
 match the file you are editing. Comments explain *why*, not *what*.
 
 Do not claim the piece models anything it does not. There is no terrain, no
-weather, no soil chemistry and no photosynthesis — there is competition for
-room, and a lifespan that depends on your neighbours.
+weather, no soil chemistry, no photosynthesis and no ecology — there is
+competition for room, and a fixed lifespan.
 
 ## Next
 
-The plants are the point and they are currently four quantised leaf forms and a
-line. Detail and beauty go here: leaf shape that reads as a species, branch
-taper, a sense of overlap and depth, and whatever else survives the rule above
+The plants are the point and they are currently four quantised leaf forms on
+curved, tapered branches. Detail and beauty go here: leaf shape that reads as
+a species, a sense of overlap and depth, and whatever else survives the rule above
 about haze. `step` is already large enough that a plant is a third of a metre of
 screen — there is room in that for a great deal that would have been invisible
 on a planet.

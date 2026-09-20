@@ -9,4 +9,5 @@ sweeps/
 # working screenshots beyond the two the documents reference
 shots/*.png
 !shots/a-bigger-plants.png
+!shots/meadow.png
 !shots/d-square-window-letterbox.png

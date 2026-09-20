@@ -1,5 +1,12 @@
 # Plants — the evidence
 
+> **Superseded on 2026-09-16.** This document describes the version with an
+> ecology: five situations the plants made for each other, affinities for them
+> in the genome, and a lifespan that read off the match. All of that was
+> removed — there is no environment now, lifespan is the `life` parameter, and
+> colour is projected from the phenotype. It is kept because the measurements
+> in it are real and say what the earlier design cost and bought.
+
 Every claim here was tested. Where a measurement contradicted an argument, the
 measurement stands and the argument is recorded as wrong rather than quietly
 deleted — the wrong turns are the most useful part of a document like this.

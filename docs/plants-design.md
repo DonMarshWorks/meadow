@@ -1,5 +1,12 @@
 # Plants — the design as it stands
 
+> **Superseded on 2026-09-16.** This document describes the version with an
+> ecology: five situations the plants made for each other, affinities for them
+> in the genome, and a lifespan that read off the match. All of that was
+> removed — there is no environment now, lifespan is the `life` parameter, and
+> colour is projected from the phenotype. It is kept because the measurements
+> in it are real and say what the earlier design cost and bought.
+
 This is the model as it is actually built. The evidence sits in
 [`plants-measured.md`](plants-measured.md) — every claim that was tested and
 what the testing said, including the several it destroyed. **Read that one
@@ -224,9 +231,10 @@ colour appearing independently in similar places, and the picture becomes a map
 of the successional state of every patch for nothing. Per-lineage jitter would
 destroy all of it.
 
-Red and magenta are absent from the palette on purpose and must stay absent:
-they are the selection highlight and the size ring. An annotation the world can
-produce on its own is not an annotation.
+Nothing is absent from the palette any more: since 2026-09-17 hue is a
+lineage's inherited colour rather than a projection of form, and the selection
+highlight is a lift toward white. Magenta was the size ring, removed the same
+day.
 
 **Instanced quads straight to the screen.** No sheet texture, no mipmap, no seam
 passes, no detail patch — the sphere needed all four to fold plants into a
