@@ -333,7 +333,16 @@ what stops a 60fps redraw from costing a 60Hz rebuild.
 **The clock.** There is no climate, so there is no second clock to stay in step
 with, and the time-lapse buttons mean what they say: ecology ticks per second.
 The frame loop pays a debt against a *share* of each frame, so the plants get
-the same CPU per second whatever the frame rate. A backlog longer than a second
+the same CPU per second whatever the frame rate. The share is of the frame the
+machine can HOLD (16.7ms, or 33.3 once it falls under 40fps), less what the
+rest of the frame needed, never under `ecoshare` of it. Until 2026-09-20 it was
+a share of how long the last frame WORKED, which fed on itself: an iPhone idle
+eleven milliseconds a frame ran 80 ticks a second of the 190 asked for, and a
+slow machine's long frames bought longer ones. `ecorate` is 80 because that is
+the pace everything had actually been judged at. One tick is 2 to 4ms on fast
+hardware and cannot be split, which is what a streaming stick runs into.
+The perf overlay (`perf=1`, P, five presses top left, a remote's rewind key)
+says mean / worst FRAME, and what key last arrived. A backlog longer than a second
 is dropped rather than paid later, and the HUD prints the rate actually
 achieved — never the multiplier, because on a slow machine that would be a claim
 the piece cannot keep.
