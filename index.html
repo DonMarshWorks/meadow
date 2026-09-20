@@ -137,9 +137,10 @@
   /* The interface, put away. Everything goes but the one button that brings
      it back, and that is left nearly invisible rather than gone: a page with
      no way back is a trap on a touch screen, which has no H key. The pinned
-     controls and the selection badge go too; the plants are all that is left. */
+     controls go too. The selection badge STAYS (Don, 2026-09-19): it only shows
+     while a plant is pressed, and a press that answers nothing reads as broken. */
   body.bare #hud .corner.tl, body.bare #hud .corner.bl, body.bare #hud .corner.br,
-  body.bare .speeds, body.bare #pins, body.bare #selbadge, body.bare #perf,
+  body.bare .speeds, body.bare #pins, body.bare #perf,
   body.bare .ctrls > :not(#hide){display:none !important}
   body.bare #hide{opacity:.6}
   body.bare #hide:hover, body.bare #hide:focus-visible{opacity:.9}
