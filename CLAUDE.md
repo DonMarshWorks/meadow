@@ -326,6 +326,26 @@ ghost copies it, for the reason `NSTEMA` exists. Ribbons thinner than a pixel
 are drawn a pixel wide and fainter (`uPx`). Measured: rebuild 0.78 → 1.03 ms at
 22,270 instances, same instance count. `curve=0` restores straight branches.
 
+**The canvas is not multisampled, since 2026-09-20** (`aa=1` restores it). It
+was most of the cost of drawing: 35 fps with it and 120 without on an
+integrated GPU at 1280x720, where removing the leaf shapes, the ribbon's
+vertices or the discard each moved it by a fifth of that or less — plain discs
+were SLOWER, because they cover more. The shader already softens every edge,
+so the pictures differ by 1 part in 255. The page's timers cannot see GPU time:
+read the overlay's `frame` against `work`.
+
+**Paint order is a choice** (`layers`, "Branches over leaves" in the settings).
+0, the default, is plant by plant; 1 is every branch in the world and then every
+leaf, each in the plants' stable order, built in ONE walk with the leaves
+written from the middle of the buffer (`LEAF0`) and moved down on completion.
+`layers=0` is byte-identical to the build before it existed. Neither is right
+everywhere: plant by plant lays one plant's branches over another's leaves, and
+leaves-over-all buries every stem. With large opaque leaves BOTH show leaves
+that seem to float and branches that seem to end in nothing; the branches are
+all there (`limbs=2` shows them) and are covered by leaves painted later. It is
+not a missing-branch bug and was checked against the instance buffer.
+`twigs=1` draws a tip's last twig with its leaf when layers is on.
+
 The instance buffer is rebuilt only when the world changes, **sliced across
 frames**, while the draw happens every frame. Keeping those two clocks apart is
 what stops a 60fps redraw from costing a 60Hz rebuild.
@@ -514,7 +534,10 @@ from; the ones marked **[here]** were found in this codebase.
   plants standing where possible — by a founder or a spore (`freshShape`). Drawn
   in the fragment shader by `leafQ` (`leafshape=7` shows one shape on every
   plant), no trigonometry per fragment. All but
-  round, clover and dandelion are drawn ahead of the node, base on it. At the default
+  round, clover and dandelion are drawn ahead of the node, base on it. Lance,
+  heart, aspen, oak, maple and chestnut have a short stalk (`petiole`,
+  `orStalk`), drawn only where the blade is not and painted as BRANCH: a leaf's
+  `W.y` carries `stemdark/leafK`. At the default
   leaf size a leaf is a pixel or two and the shape cannot be seen; it needs the
   leaf-size dial turned up.
 - **Only tips carry leaves, and a branch grows forward with its leaf.** A new
