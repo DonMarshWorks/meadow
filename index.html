@@ -5870,6 +5870,8 @@ let ecoDebt = 0;
 let res = 1;                           // adaptive resolution multiplier
 let lastFrameMs = 16.7;
 let lastBudget = 0, workSum = 0;
+let raisedFrom = 0, raiseHold = 0;     // the frame rate a climb started from, and when the next may be tried
+let govWork = 0;                       // the frames' own work since the governor last looked
 let otherMs = 4, slowFrames = false;   // the frame's work apart from the ecology; and whether 60 is out of reach
 
 function resize(){
@@ -5895,14 +5897,36 @@ function meterFps(now){
   const dt = now-fpsT0;
   if(dt >= 500){
     fpsNow = fpsFrames*1000/dt;
+    const fpsFramesWas = fpsFrames;
     fpsFrames=0; fpsT0=now;
     /* Adaptive resolution, on two widely-spaced thresholds. A single one
        sitting near the machine's natural rate would toggle every second, and
        a picture that shimmers between two versions of itself is worse than
        either. */
     const before = res;
-    if(fpsNow < 34 && res > PARAMS.minres) res = Math.max(PARAMS.minres, res-0.08);
-    else if(fpsNow > 54 && res < 1)        res = Math.min(1, res+0.04);
+    /* Fewer pixels only help a frame that is WAITING for them. A Fire TV
+       measured 14 frames a second with 69 of every 71 milliseconds spent in
+       this page's own JavaScript: its GPU was idle, and the governor had cut
+       the picture to 806x453 on a 1080p screen for nothing, because all it
+       looked at was the frame rate (2026-09-21). So the share of the frame
+       not accounted for by our own work decides: under a tenth, the pixels
+       are free and resolution climbs whatever the frame rate; over a third
+       and slow, it falls. Far apart, for the reason the old pair was. */
+    const wait = Math.max(0, 1 - (govWork/Math.max(1,fpsFramesWas))/(1000/Math.max(1,fpsNow)));
+    govWork = 0;
+    /* A driver may make us wait INSIDE a GL call, where the wait is counted
+       as our own work and the test above cannot see it. So a climb is on
+       probation: if the frame rate falls by a quarter after one, it is taken
+       back and not tried again for half a minute. */
+    if(raisedFrom > 0 && fpsNow < 0.75*raisedFrom && res > PARAMS.minres){
+      res = Math.max(PARAMS.minres, res-0.04); raiseHold = now + 30000; raisedFrom = 0;
+    }
+    else if(fpsNow < 34 && wait > 0.35 && res > PARAMS.minres){ res = Math.max(PARAMS.minres, res-0.08); raisedFrom = 0; }
+    else if((fpsNow > 54 || (wait < 0.10 && now > raiseHold)) && res < 1){
+      raisedFrom = fpsNow > 54 ? 0 : fpsNow;
+      res = Math.min(1, res+0.04);
+    }
+    else raisedFrom = 0;
     if(res !== before) resize();
     /* and how much of a frame the rebuild may take. Sliced rather than
        skipped: the same milliseconds spread evenly instead of arriving in a
@@ -5988,7 +6012,7 @@ function frame(now){
   /* smoothed, because the rebuild's slices and the HUD come and go and a
      budget that twitched with them would make the tick rate twitch too */
   otherMs += 0.2*(Math.max(0, lastFrameMs-_simMs) - otherMs);
-  workSum += lastFrameMs;
+  workSum += lastFrameMs; govWork += lastFrameMs;
   PERF.frames++;
   if(perfOn) showPerf(now);
 }
