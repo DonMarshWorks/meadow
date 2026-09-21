@@ -1289,6 +1289,19 @@ const PARAMS = {
                     // this many times as hard as an ordinary bifurcation.
 
   /* ---- how it is drawn ---- */
+  layers:  0,       // 1 draws every branch in the world, then every leaf over
+                    // them, each layer in the plants' own stable order. Per
+                    // plant (0) a plant standing over another lays its
+                    // branches across the other's leaves, which can read as a
+                    // mistake; but with 1, large opaque leaves bury every
+                    // stem and float with nothing holding them. Neither is
+                    // right everywhere, so it is a choice in the settings
+                    // and off by default (Don, 2026-09-21). With 1 the dial
+                    // after next only orders parts that no longer interleave.
+  twigs:   0,       // with layers on, 1 draws the branch that CARRIES a leaf in
+                    // the leaf layer, directly under its own leaf, so a leaf is
+                    // never parted from its stem by a neighbour's foliage. Only
+                    // the last twig of each tip rides up; the rest stay below.
   limbs:   0,       // what order a plant's parts are drawn in.
                     //   0  interleaved — branch, leaf, next branch over it
                     //   1  every branch of a plant, then all its leaves
@@ -1430,6 +1443,7 @@ const PARAMS = {
      CLAUDE.md: four theories about where the time went were wrong, and what
      found the answer was turning passes off one at a time. */
   noplants: 0,      // draw nothing but the ground
+  aa:      0,       // 1 asks for a multisampled canvas; see getContext for what it cost
   perf:    0,       // 1 shows where the milliseconds go, and what keys arrive
   minres:  0.42,    // how far the adaptive resolution may go down before it
                     // gives up. A parameter rather than a constant because the
@@ -3154,15 +3168,19 @@ function emitGhost(n, w){
     IBUF[w+I_COL+3]=ga*GHOST[g+14];
     w+=INST;
   }
-  IBUF[w+I_A]=gx;             IBUF[w+I_A+1]=gy;
+  /* its leaf, which with layers on belongs to the other half of the buffer */
+  const v = SB.layered ? SB.wl : w;
+  IBUF[v+I_A]=gx;             IBUF[v+I_A+1]=gy;
   const gs=GHOST[g+26], gl_= gs===0 ? gw : gw*LEAFBIG*LEAFFIT[gs|0];
-  IBUF[w+I_B]= gs===0 ? gw*GHOST[g+7] : gl_;  IBUF[w+I_B+1]=gl_*GHOST[g+35];   /* as it was rolled when it died */
-  IBUF[w+I_C]=GHOST[g+8];     IBUF[w+I_C+1]=gs;
-  IBUF[w+I_D]=GHOST[g+36]; IBUF[w+I_D+1]=GHOST[g+37];      /* as it was last drawn pointing */
-  IBUF[w+I_W]=-1;             IBUF[w+I_W+1]=0;
+  IBUF[v+I_B]= gs===0 ? gw*GHOST[g+7] : gl_;  IBUF[v+I_B+1]=gl_*GHOST[g+35];   /* as it was rolled when it died */
+  IBUF[v+I_C]=GHOST[g+8];     IBUF[v+I_C+1]=gs;
+  IBUF[v+I_D]=GHOST[g+36]; IBUF[v+I_D+1]=GHOST[g+37];      /* as it was last drawn pointing */
+  IBUF[v+I_W]=-1;             IBUF[v+I_W+1]=0;
   const lk=GHOST[g+25];
-  IBUF[w+I_COL]=gr*lk; IBUF[w+I_COL+1]=gg*lk; IBUF[w+I_COL+2]=gb*lk;
-  IBUF[w+I_COL+3]=ga;
+  IBUF[v+I_W+1]= lk>1e-3 ? PARAMS.stemdark/lk : 1;
+  IBUF[v+I_COL]=gr*lk; IBUF[v+I_COL+1]=gg*lk; IBUF[v+I_COL+2]=gb*lk;
+  IBUF[v+I_COL+3]=ga;
+  if(SB.layered){ SB.wl=v+INST; return w; }
   return w+INST;
 }
 
@@ -3376,7 +3394,11 @@ function emitNode(i, pass, w){
       lhx=NLDX[i]; lhy=NLDY[i]; }
     IBUF[w+I_C]=rot;     IBUF[w+I_C+1]=shp;
     IBUF[w+I_D]=lhx;     IBUF[w+I_D+1]=lhy;
-    IBUF[w+I_W]=-1;      IBUF[w+I_W+1]=0;
+    /* W.y of a leaf: what its colour is multiplied by to give its BRANCH's.
+       Both are the node's one paint, the branch times stemdark and the leaf
+       times leafK, so the stalk drawn inside the leaf's square can be the
+       colour of the branch it continues (Don, 2026-09-21). */
+    IBUF[w+I_W]=-1;      IBUF[w+I_W+1]= leafK>1e-3 ? PARAMS.stemdark/leafK : 1;
     IBUF[w+I_COL  ]=Math.min(255,r)*leafK/255;
     IBUF[w+I_COL+1]=Math.min(255,g)*leafK/255;
     IBUF[w+I_COL+2]=Math.min(255,b)*leafK/255;
@@ -3387,7 +3409,13 @@ function emitNode(i, pass, w){
 }
 
 /* The cursor a sliced rebuild carries between frames. */
-const SB = {w:0, a:0, n:0, gi:0, limbs:0, busy:false};
+const SB = {w:0, wl:0, layered:false, a:0, n:0, gi:0, limbs:0, busy:false};
+/* With layers on the walk is unchanged — one pass over the plants, a node's
+   branch and leaf emitted together so the paint is still mixed once — but the
+   leaves are written from the middle of the buffer and moved down against the
+   branches when the build completes. Walking the world twice would have mixed
+   every colour twice, and the rebuild already costs what the ecology does. */
+const LEAF0 = (MAXINST>>1)*INST;
 /* There is no cull, and there is nowhere for one to hide.
    The sphere skipped the half of the sheet nobody was looking at, which cost
    nothing visually only because the rebuild had already been made continuous —
@@ -3424,6 +3452,7 @@ function beginInstances(){
   orderByLineage();
   PERF.bsort += performance.now() - _o0;
   SB.w = w; SB.a = 0; SB.n = orderN; SB.limbs = PARAMS.limbs|0;
+  SB.layered = PARAMS.layers>0; SB.wl = LEAF0;
   SB.busy = true;
 }
 
@@ -3431,8 +3460,8 @@ function beginInstances(){
    lineages with nothing living left. The cursor lives on SB because the walk
    can now stop between two frames and resume where it left off. */
 function upTo(key, w){
-  const WLIM=(MAXINST-2)*INST;
-  while(SB.gi<gorderN && w<WLIM){
+  const WLIM = SB.layered ? LEAF0-2*INST : (MAXINST-2)*INST;
+  while(SB.gi<gorderN && w<WLIM && SB.wl<(MAXINST-2)*INST){
     const n=GORDER[SB.gi];
     if(key>=0 && GHOST[n*GH_F+15] > key) break;
     w = emitGhost(n, w); SB.gi++;
@@ -3454,7 +3483,7 @@ function upTo(key, w){
    means finish now, which is what instHash and every non-frame caller wants. */
 function stepInstances(budgetMs){
   if(!SB.busy) return true;
-  const WLIM=(MAXINST-2)*INST;
+  const WLIM = SB.layered ? LEAF0-2*INST : (MAXINST-2)*INST;
   const t0 = performance.now();
   let w = SB.w;
   while(SB.a < SB.n && w < WLIM){
@@ -3462,7 +3491,21 @@ function stepInstances(budgetMs){
     let b=SB.a;
     while(b<SB.n && NDRAW[ORDER[b]]===key) b++;
     w = upTo(key, w);
-    if(SB.limbs===0){
+    if(SB.layered){
+      for(let q=SB.a;q<b && w<WLIM && SB.wl<(MAXINST-2)*INST;q++){
+        const i=ORDER[q];
+        if(PARAMS.twigs>0){
+          /* branch first, because the leaf pass reads what the branch pass
+             left (NSTEMA). Both go to the leaf layer; a node that turns out
+             to carry no leaf has its branch moved down to where it belongs. */
+          const b0=SB.wl, b1=emitNode(i, 0, b0), l1=emitNode(i, 1, b1);
+          if(l1>b1) SB.wl=l1;
+          else if(b1>b0){ IBUF.copyWithin(w, b0, b1); w+=INST; }
+        } else {
+          w = emitNode(i, 0, w); SB.wl = emitNode(i, 1, SB.wl);
+        }
+      }
+    } else if(SB.limbs===0){
       for(let q=SB.a;q<b && w<WLIM;q++){
         const i=ORDER[q];
         w = emitNode(i, 0, w); w = emitNode(i, 1, w);
@@ -3482,6 +3525,7 @@ function stepInstances(budgetMs){
   }
   /* and the dead of lineages that sort after the last living one */
   w = upTo(-1, w);
+  if(SB.layered){ IBUF.copyWithin(w, LEAF0, SB.wl); w += SB.wl-LEAF0; }
   SB.w = w; SB.busy = false;
   instN = w/INST;
   PERF.bemit += performance.now()-t0;
@@ -5207,7 +5251,15 @@ function genomeText(i){
    3.  WebGL
    ══════════════════════════════════════════════════════════════════════ */
 const canvas=document.getElementById("gl");
-const gl = canvas.getContext("webgl2",{antialias:true,alpha:false,powerPreference:"high-performance"});
+/* No multisampling, since 2026-09-20. It was on, and it was most of the cost
+   of drawing: the same world on a laptop's integrated GPU at 1280x720 ran 35
+   frames a second with it and the display's full 120 without, measured twice,
+   with the leaf shapes, the ribbon's vertices and the discard each taken out
+   in turn and none of them worth a fifth of that. It bought almost nothing:
+   every edge here is already softened in the fragment shader (uSoft) and thin
+   ribbons are band-limited against the pixel (uPx), so the two pictures of
+   one world differ by 1 part in 255 on average. aa=1 brings it back. */
+const gl = canvas.getContext("webgl2",{antialias:PARAMS.aa>0,alpha:false,powerPreference:"high-performance"});
 if(!gl){ document.getElementById("fail").style.display="flex";
          document.getElementById("splash").style.display="none"; return; }
 
@@ -5274,7 +5326,7 @@ layout(location=6) in vec4 aCol;
    fade to hide what the bound did. A plane needs a divide. */
 uniform vec2 uInv;
 uniform float uPx;                    /* one pixel, in arena units */
-out vec2 vC; out vec4 vCol; flat out float vKind; flat out float vShape;
+out vec2 vC; out vec4 vCol; flat out float vKind; flat out float vShape; flat out float vStalk;
 void main(){
   float t=aUV.x, s=aUV.y;
   vCol = aCol;
@@ -5289,7 +5341,7 @@ void main(){
     float ahead = (aC.y > 0.5 && abs(aC.y-4.0) > 0.5 && abs(aC.y-9.0) > 0.5) ? 1.0 : 0.0;
     vec2 e = (c + vec2(ahead, 0.0))*aB;
     p = aA + vec2(e.x*ca - e.y*sa, e.x*sa + e.y*ca);
-    vC = c; vKind = 0.0;
+    vC = c; vKind = 0.0; vStalk = aW.y;
   } else {
     /* a branch: a cubic Hermite from A to B with tangents C and D */
     float t2=t*t, t3=t2*t;
@@ -5305,12 +5357,21 @@ void main(){
     float ww = max(wd, 0.6*uPx);
     vCol.a *= wd/ww;
     p = q + vec2(-d.y, d.x)*(s*ww);
-    vC = vec2(2.0*t-1.0, s); vKind = 1.0; vShape = 0.0;
+    vC = vec2(2.0*t-1.0, s); vKind = 1.0; vShape = 0.0; vStalk = 1.0;
   }
   gl_Position = vec4(p*uInv, 0.0, 1.0);
 }`, `#version 300 es
 precision highp float;
-in vec2 vC; in vec4 vCol; flat in float vKind; flat in float vShape;
+in vec2 vC; in vec4 vCol; flat in float vKind; flat in float vShape; flat in float vStalk;
+/* set by leafQ when the point is on the leaf's stalk and not its blade, so
+   main can paint it as branch */
+float gStalk = 0.0;
+float orStalk(float blade, float stalk){
+  /* only where the blade is not: over the blade it drew a dark rib part way
+     up the leaf, which on a heart ran in from between the lobes */
+  if(blade >= 1.0 && stalk < blade){ gStalk = 1.0; return stalk; }
+  return blade;
+}
 uniform float uSoft;
 out vec4 o;
 /* How far out of a leaf a point is: under 1 inside, 1 on the edge. One
@@ -5329,11 +5390,21 @@ float leafletQ(vec2 v, vec2 d, float len, float fat, float pointed){
                           : fat*len*2.6*al*sqrt(1.0-al);
   return abs(v.x*d.y - v.y*d.x)/max(w, 1e-3);
 }
+/* A short stalk from the node to where the blade begins. A blade that is a
+   point at its base, or set in from it, starts a few pixels clear of the end
+   of its branch once it is drawn large: the aspen's flat base is a tenth of
+   the leaf's length out, the heart's notch an eighth, and the oak and the
+   lance are under a pixel wide for their first twentieth. With every leaf
+   drawn over every branch that gap read as leaves floating loose (Don,
+   2026-09-21). 9 where the point is past the stalk's end. */
+float petiole(vec2 p, float to){
+  return p.x < to ? max(abs(p.y)/0.06, (-1.0-p.x)*10.0 + 1.0) : 9.0;
+}
 float leafQ(vec2 p, float s){
   if(s < 0.5) return length(p);
   if(s < 1.5){                                   /* lance: pointed both ends */
     float w = 0.42*(1.0-p.x*p.x);
-    return max(abs(p.x), abs(p.y)/max(w, 1e-3));
+    return orStalk(max(abs(p.x), abs(p.y)/max(w, 1e-3)), petiole(p, -0.80));
   }
   if(s < 2.5){                                   /* spade: broad base, one point */
     float u = clamp((p.x+1.0)*0.5, 0.0, 1.0);
@@ -5344,7 +5415,7 @@ float leafQ(vec2 p, float s){
     vec2 h = vec2(p.y*1.25, 0.15-p.x*1.15);
     float a = h.x*h.x + h.y*h.y - 1.0;
     float f = a*a*a - h.x*h.x*h.y*h.y*h.y;
-    return 1.0 + clamp(f*4.0, -1.0, 1.0);
+    return orStalk(1.0 + clamp(f*4.0, -1.0, 1.0), petiole(p, -0.65));
   }
   if(s < 4.5){                                   /* clover: three discs */
     float d = min(length(p-vec2(0.5,0.0)),
@@ -5391,7 +5462,7 @@ float leafQ(vec2 p, float s){
     float w = max(body, tip);
     float across = abs(p.y)/max(w, 1e-3);
     float along = max(p.x, (-0.80-p.x)*6.0 + 1.0);        /* the flat base */
-    return max(across, along);
+    return orStalk(max(across, along), petiole(p, -0.70));
   }
   /* wheat: an ear. A stalk down the middle and plump grains set on it,
      each leaning toward the tip, the two sides out of step with each other
@@ -5434,7 +5505,7 @@ float leafQ(vec2 p, float s){
     float env = 1.75*u*sqrt(1.0-u);
     float ph = fract(u*4.0)*2.0 - 1.0;
     float w = env*(0.58 + 0.42*(1.0 - ph*ph));
-    return max(abs(p.x), a.y/max(w, 1e-3));
+    return orStalk(max(abs(p.x), a.y/max(w, 1e-3)), petiole(p, -0.75));
   }
   /* the last two are palmate: leaflets from a point a little way up a stalk.
      Mirrored top to bottom, so only the upper ones are measured. */
@@ -5446,7 +5517,7 @@ float leafQ(vec2 p, float s){
     q = min(q, leafletQ(v, vec2(0.574, 0.819), 1.10, 0.30, 1.0));
     q = min(q, leafletQ(v, vec2(-0.342, 0.940), 0.75, 0.30, 1.0));
     q = min(q, length(v - vec2(0.12, 0.0))/0.36);
-    return min(q, stalk);
+    return orStalk(q, stalk);
   }
   /* horse chestnut: seven round-ended leaflets fanned from the stalk */
   vec2 v = a - vec2(-0.45, 0.0);
@@ -5454,7 +5525,7 @@ float leafQ(vec2 p, float s){
   q = min(q, leafletQ(v, vec2(0.848, 0.530), 1.28, 0.17, 0.0));
   q = min(q, leafletQ(v, vec2(0.438, 0.899), 1.02, 0.17, 0.0));
   q = min(q, leafletQ(v, vec2(-0.105, 0.995), 0.68, 0.17, 0.0));
-  return min(q, stalk);
+  return orStalk(q, stalk);
 }
 void main(){
   /* a leaf is a disc; a branch is soft across itself and whole along */
@@ -5463,7 +5534,7 @@ void main(){
      some drivers */
   float a = (1.0 - smoothstep(1.0-uSoft, 1.0, q))*vCol.a;
   if(a <= 0.004) discard;
-  o = vec4(vCol.rgb, a);
+  o = vec4(gStalk > 0.5 ? vCol.rgb*vStalk : vCol.rgb, a);
 }`);
 
 const plantVAO=gl.createVertexArray();
@@ -6294,6 +6365,11 @@ const SETTINGS = [
   lo:"invisible", hi:"skeletal",
   why:"How thick branches are between leaves. Very thin branches disappear, displaying plants as a scatter of disconnected leaves. Thick branches emphasize the plant's structure as the primary visual.",
   fmt:v=>v===0?"none":v.toFixed(2)},
+ {key:"layers", name:"Branches over leaves", choice:[
+    {label:"Plant by plant", why:"each plant is drawn whole, branches and leaves together", set:{layers:0}},
+    {label:"Leaves over all branches", why:"every branch in the arena lies under every leaf", set:{layers:1}}],
+  test:p=>p.layers>0?1:0,
+  why:"Where plants overlap, one is drawn over the other. Plant by plant, the upper plant's branches cross the lower plant's leaves, and every leaf visibly hangs from its own branch. With leaves over all branches, no branch ever crosses a leaf, but large leaves hide the branches that carry them and can look as if they are floating."},
  {key:"pmut", name:"Evolution speed", min:0, max:6, step:0.1,
   lo:"holds its shape", hi:"restless",
   why:"How quickly mutations occur in plants. A low value allows plants to hold their shape but slows the rate of adaptation. A high value increases diversification, but might harm the reproduction of a plant that is already well suited to its situation.",
