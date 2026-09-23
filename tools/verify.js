@@ -201,7 +201,7 @@ async function open(browser, hash, size, frames) {
      with every real check behind it green. */
   /* auto=0: the page sizes its world to the machine, and a slow build machine
      must test the same world as a fast one */
-  await page.goto(`http://127.0.0.1:${PORT}/index.html` + (hash || '#') + '&auto=0', { waitUntil: 'load', timeout: 300000 });
+  await page.goto(`http://127.0.0.1:${PORT}/index.html` + (hash || '#') + '&auto=0&seasons=0', { waitUntil: 'load', timeout: 300000 });
   await page.waitForFunction(() => window.__world && window.__world.plants, null, { timeout: 180000 });
   page.__errs = errs;
   return page;

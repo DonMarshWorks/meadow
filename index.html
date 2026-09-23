@@ -1354,6 +1354,10 @@ const PARAMS = {
                     // where it stands, carrying the leaf. Drawing only.
   leafshape: -1,    // 1..12 gives every plant that one leaf shape, to look at it;
                     // -1 is the real rule. See freshShape.
+  seasons: 1,       // the year turns: see seasonAt. 0 holds summer for ever
+  season:  3,       // minutes a season lasts, 1 to 10
+  seasonat: -1,     // hold the year at a point, 0 to 4 (2.5 is the middle of
+                    // fall), for a picture; -1 lets it turn
   sat:     0.60,    // how saturated the colours are, 0..1. 1 is as vivid as the
                     // palette goes; lower is more muted and more lifelike.
                     // Hue and lightness are untouched, so plants stay apart.
@@ -1585,7 +1589,7 @@ const LEAFFIT = [1, 1.12, 0.90, 0.74, 0.84, 1, 1, 0.84, 1, 1, 0.94, 1.08, 1.00];
 function leafLook(i){
   /* with a child on it a node has no leaf, at once: its first child took it */
   const dt=(ptick-NLKAT[i])/LEAFT, open = NLK[i]>0 ? 0 : dt;
-  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open));
+  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf;
   if(LEAF[3]<=0){ LEAF[0]=0; LEAF[1]=1; LEAF[2]=0; return; }
   if(NLIVE[i]===2){
     const wf = WOODFADE>0 ? Math.min(1,(ptick-NWOODAT[i])/WOODFADE) : 1;
@@ -2758,16 +2762,72 @@ function wheelDeg(h){
   const p=(h-Math.floor(h))*12, k=p|0;
   return WHEEL[k]+(WHEEL[k+1]-WHEEL[k])*(p-k);
 }
+/* ---- the seasons ----
+   Paint only, on the wall clock (Don, 2026-09-23). Nothing here reaches the
+   simulation, so seed 7 is the same world in any season and on any machine;
+   a season only changes what a node is painted, and how large its leaf is
+   drawn. Four looks, each a shift of EVERY hue the same way, a stretch of
+   saturation and lightness and a leaf scale: hue is ancestry here, and a
+   fall that painted every plant orange would take that away. A third of
+   the way toward the season's hue is the most it goes. The year starts at
+   a point set by the seed, so a link reproduces the look and two screens
+   differ, and each season holds a plateau for three fifths of its length
+   with the change spread over the fifth either side of the boundary.
+   SEASON is sampled ONCE per instance build (beginInstances), so a sliced
+   build equals a whole one; the harnesses pin seasons=0 because two loads
+   of one seed are otherwise minutes apart on the clock. */
+const SEASONS = [
+  {name:"spring", hue: 80, k:0.25, sat:0.80, light: 0.10, leaf:0.85},
+  {name:"summer", hue:120, k:0.30, sat:1.05, light: 0.00, leaf:1.00},
+  {name:"fall",   hue: 30, k:0.55, sat:1.05, light:-0.02, leaf:0.90},
+  {name:"winter", hue:215, k:0.20, sat:0.55, light:-0.14, leaf:0.55}];
+const SEASON = {t:1.5, name:"summer", hue:120, k:0, sat:1, light:0, leaf:1, fall:0};
+const SEASON0 = ((SEED*0.6180339887)%1)*4;
+function seasonAt(t, o){
+  const sm = u => u*u*(3-2*u);
+  const si = Math.floor(t)&3, u = t-Math.floor(t);
+  const a = SEASONS[si], b = u<0.2 ? SEASONS[(si+3)&3] : SEASONS[(si+1)&3];
+  const w = u<0.2 ? 1-sm((u+0.2)/0.4) : (u>0.8 ? sm((u-0.8)/0.4) : 0);
+  let dh = b.hue-a.hue; if(dh>180) dh-=360; if(dh<-180) dh+=360;
+  o.t = t; o.name = a.name;
+  o.hue = (a.hue + dh*w + 360)%360;
+  o.k = a.k+(b.k-a.k)*w; o.sat = a.sat+(b.sat-a.sat)*w;
+  o.light = a.light+(b.light-a.light)*w; o.leaf = a.leaf+(b.leaf-a.leaf)*w;
+  o.fall = (a.name==="fall" ? 1-w : 0) + (b.name==="fall" ? w : 0);
+  return o;
+}
+function sampleSeason(){
+  if(PARAMS.seasons<=0){ seasonAt(1.5, SEASON); SEASON.k=0; SEASON.sat=1; SEASON.light=0; SEASON.leaf=1; SEASON.fall=0; return; }
+  if(PARAMS.seasonat>=0){ seasonAt(PARAMS.seasonat%4, SEASON); return; }
+  const per = Math.max(0.1, PARAMS.season)*60;
+  seasonAt((SEASON0 + performance.now()/1000/per)%4, SEASON);
+}
 function nodeColour(i,out){
-  const h = wheelDeg(NHUE[i] - hueOwed(i));
+  let h = wheelDeg(NHUE[i] - hueOwed(i)), satx = 1;
+  if(SEASON.k>0){
+    let dh=SEASON.hue-h; if(dh>180) dh-=360; if(dh<-180) dh+=360;
+    /* Fall is not a shift toward one hue. The short way from blue to orange
+       runs through violet, and the first fall was magenta and yellow (seed
+       7, 2026-09-23). A warm hue goes to red-orange; anything cooler goes
+       DOWN the wheel, through green to yellow, and loses most of its
+       saturation on the way, which is what brown is. */
+    if(SEASON.fall>0){
+      let df, cool = 0;
+      if(h<=60 || h>=300){ df=20-h; if(df<-180) df+=360; }
+      else { df=45-h; cool=1; }
+      dh += (df-dh)*SEASON.fall;
+      satx = 1 - 0.45*cool*SEASON.fall;
+    }
+    h=(h+dh*SEASON.k+360)%360;
+  }
   const turn = Math.min(1, Math.abs(NANG[i])/Math.max(1e-6, PARAMS.angmax*0.6));
   /* and the whole of it scaled by a taste dial: vivid is pretty and muted
      is lifelike, and which is wanted is the viewer's call. Read live. */
-  const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i])*Math.max(0, Math.min(1, PARAMS.sat));
+  const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i]*SEASON.sat*satx)*Math.max(0, Math.min(1, PARAMS.sat));
   /* Lightness is age: light at birth, darkening over the node's life, so
      the growing edge of a plant is bright and its old interior is deep. */
   const age = Math.min(1, (ptick-NBORN[i])/Math.max(1, NLIFE[i]));
-  const l = Math.max(0.12, Math.min(0.86, 0.64 - 0.32*age + NTL[i]));
+  const l = Math.max(0.12, Math.min(0.86, 0.64 - 0.32*age + NTL[i] + SEASON.light));
   hslToRgb(h, sat, l, out);
 }
 
@@ -3434,6 +3494,7 @@ const LEAF0 = (MAXINST>>1)*INST;
 function beginInstances(){
   let w=0;
   paintFor = -1;
+  sampleSeason();
   const WLIM=(MAXINST-2)*INST;
   const _g0 = performance.now();
   orderGhosts();
@@ -6550,6 +6611,15 @@ const SETTINGS = [
   lo:"plain dark", hi:"full photograph",
   why:"How bright the photograph of moss and soil under the plants is. Turned right down, the arena is the plain dark ground it used to be, which shows the plants most clearly.",
   fmt:v=>v===0?"plain":Math.round(v*100)+"%"},
+ {key:"seasons", name:"Seasons", choice:[
+    {label:"The year turns", why:"spring, summer, fall and winter, each a little different in color and leaf", set:{seasons:1}},
+    {label:"Always summer", why:"one look, held", set:{seasons:0}}],
+  test:p=>p.seasons>0?1:0,
+  why:"Whether the seasons change. Spring is pale and light, summer green, fall turns toward orange and red, and winter is dark and muted with smaller leaves. Every plant keeps its own hue through the year, shifted the same way, so they stay easy to tell apart."},
+ {key:"season", name:"Season length", min:1, max:10, step:0.5,
+  lo:"a minute", hi:"ten minutes",
+  why:"How long each season lasts, by the clock on the wall rather than the plants' own time, so it is the same on a slow screen as a fast one.",
+  fmt:v=>v===1?"1 minute":v+" minutes"},
  {key:"sat", name:"Color", min:0, max:1, step:0.05,
   lo:"muted", hi:"vivid",
   why:"How saturated the plants are. Vivid is striking; muted looks more like real foliage. Each plant keeps its own hue either way, so they stay easy to tell apart until the color is nearly gone.",
@@ -9716,6 +9786,8 @@ window.__world = {
   runWorld(ticks){ for(let i=0;i<(ticks|0);i++) plantsStep(); },
   /* what the sizing probe measured and what, if anything, it chose */
   sized(){ return Object.assign({}, sized); },
+  season(){ sampleSeason(); return Object.assign({}, SEASON); },
+  seasonAt(t){ return seasonAt(t, {}); },
   /* the same ticks, stopped and resumed at EVERY point a tick may yield. It
      must leave the world byte for byte where runWorld leaves it. */
   runSliced(ticks){ let slices=0; for(let i=0;i<(ticks|0);i++){ while(!plantsSlice(1)) slices++; } return slices; },
