@@ -362,7 +362,40 @@ slow machine's long frames bought longer ones. `ecorate` is 80 because that is
 the pace everything had actually been judged at. One tick is 2 to 4ms on fast
 hardware and cannot be split, which is what a streaming stick runs into.
 The perf overlay (`perf=1`, P, five presses top left, a remote's rewind key)
-says mean / worst FRAME, and what key last arrived. A backlog longer than a second
+says mean / worst FRAME, and what key last arrived, plus `frame` (how long
+one lasts) against `work` (how long it worked) and `gpu`, the GPU's backlog.
+
+**The tick is a generator (2026-09-23).** `plantsTick` may hand the frame back
+between bodies, blocks of nodes and buds, and `plantsSlice(endMs)` resumes
+it; `plantsStep` drives the same generator to its end, so every harness and
+the prerun run one implementation. Nothing else writes the world between
+slices, so `runSliced` — yield at every opportunity — leaves the world byte
+for byte where `runWorld` does, and that is asserted before anything else is
+believed. It exists because a 50ms tick cannot be interrupted and a Fire TV
+drew 14 frames a second with its GPU idle. The rebuild's slice is capped at
+8ms. Note what it does NOT fix: the picture changes when a rebuild completes,
+and on that stick that was three times a second at the default world size.
+What the eye sees is the rebuild rate; report it beside the frame rate.
+
+**The resolution governor times the GPU.** Every two seconds one frame reads
+back a pixel, which cannot return until the frame is drawn, and the backlog
+in FRAMES decides. Two indirect tests failed first: the frame rate alone cut a
+CPU-bound stick to 806x453 for nothing, and "the share of the frame not
+accounted for by our work" read a 20ms frame shown at a 33ms refresh as 40%
+waiting for pixels. `gl.finish()` returns at once in Chrome and measures
+nothing.
+
+**A slow machine grows a bigger-plant world** (`auto`, `sizeToMachine`). The
+first 150 ticks after seeding are timed against this desktop (`AUTO_REF`); a
+machine over 2.5 times slower reloads with a larger `step`, as the square
+root of the shortfall, up to 0.06, which on a CPU throttled ten times took the
+picture from 3 changes a second to 33. The chosen step goes in the link, so
+the world a stick shows is the world its link reproduces; naming step, or
+`auto=0`, leaves it alone, and verify and sweep pin `auto=0`. Don chose this
+over one world for every machine. The probe is noisy, about a fifth either
+way on one machine. CPU throttling in Chromium
+(`Emulation.setCPUThrottlingRate`, 10x) is a fair stand-in for the stick's
+CPU and no stand-in at all for its GPU. A backlog longer than a second
 is dropped rather than paid later, and the HUD prints the rate actually
 achieved — never the multiplier, because on a slow machine that would be a claim
 the piece cannot keep.
@@ -527,7 +560,24 @@ from; the ones marked **[here]** were found in this codebase.
   age and saturation still says turn.
 - **Nothing is reserved.** The selection highlight is a lift toward white.
   (Red was the highlight and magenta the size ring; both went 2026-09-17.)
-- **Twelve leaf shapes** (lance, spade, heart, clover, needles, fern, aspen,
+- **Seasons, variation and style drift are paint only, on the wall clock**
+  (2026-09-23), so seed 7 is the same world in any season on any machine.
+  Seasons (`seasonAt`): every hue shifted the same way, saturation and
+  lightness stretched, the drawn leaf scaled; the year starts where the seed
+  says and each season holds a plateau for three fifths of its length. Fall
+  sends cool hues DOWN the wheel through green to yellow and into brown — the
+  short way ran through violet and the first fall was magenta. Variation
+  (`freshTone`, `NVO`, `NVS`): each family's own leaf opacity and branch
+  thickness, multipliers on the dials, hashed from the tone draw rather than
+  taken from `prnd` so the world's random stream is untouched. Style
+  (`styleAt`): four seeded random walks multiplying leaf size, opacity, stem
+  and saturation; a moved dial leaves the walk. All three are sampled ONCE per
+  instance build, so a sliced build equals a whole one — but two builds
+  seconds apart differ by design, so `instHash` proves equality only with the
+  clocks pinned (`seasonat`, `styleat`) or the features off, and verify and
+  sweep pin `seasons=0&style=0`.
+
+**Twelve leaf shapes** (lance, spade, heart, clover, needles, fern, aspen,
   wheat, dandelion, oak, maple, horse chestnut; shape 0, the plain disc, is retired but its number is
   kept), a gene (`NSHAPE`): copied exactly within a plant and to
   the pieces that rot off it, and chosen fresh — unused among the largest
