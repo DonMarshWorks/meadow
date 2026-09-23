@@ -1354,6 +1354,9 @@ const PARAMS = {
                     // where it stands, carrying the leaf. Drawing only.
   leafshape: -1,    // 1..12 gives every plant that one leaf shape, to look at it;
                     // -1 is the real rule. See freshShape.
+  vary:    1,       // each lineage draws its own leaf opacity and branch
+                    // thickness, as multipliers on the dials: see freshTone.
+                    // 0 paints every plant alike. Paint only either way.
   seasons: 1,       // the year turns: see seasonAt. 0 holds summer for ever
   season:  3,       // minutes a season lasts, 1 to 10
   seasonat: -1,     // hold the year at a point, 0 to 4 (2.5 is the middle of
@@ -1656,10 +1659,29 @@ function leafRoll(i){
 }
 const NTL = new Float32Array(PMAX), NTS = new Float32Array(PMAX);
 const TONE_L = 0.11, TONE_S0 = 0.55, TONE_S1 = 1.20;
+/* ---- a plant's own look, beside its hue and tone (Don, 2026-09-23) ----
+   Two more per-lineage draws, multipliers on the dials a viewer sets: leaf
+   opacity, 0.6 to 1.25 of the alpha dial, and branch thickness, 0.5 to 1.6
+   of the stem dial. Drawn by whatever founds a plant and copied exactly
+   down the body and to its children, so a family shares a look.
+   NOT drawn from prnd: hashed from the tone that was, so the world's random
+   stream is untouched and every seed is the world it was before these
+   existed. vary=0 paints every plant alike, and changes nothing else. */
+const NVO = new Float32Array(PMAX), NVS = new Float32Array(PMAX);
+const _fb = new Float32Array(2), _ib = new Int32Array(_fb.buffer);
 function freshTone(i){
   NTL[i] = (prnd()*2-1)*TONE_L;
   NTS[i] = TONE_S0 + (TONE_S1-TONE_S0)*prnd();
+  _fb[0]=NTL[i]; _fb[1]=NTS[i];
+  let h = Math.imul(_ib[0] ^ Math.imul(_ib[1], 0x9E3779B1), 0x85EBCA6B); h ^= h>>>13;
+  const u1 = (h>>>0)/4294967296;
+  h = Math.imul(h ^ 0x27D4EB2F, 0xC2B2AE35); h ^= h>>>16;
+  const u2 = (h>>>0)/4294967296;
+  NVO[i] = 0.6 + 0.65*u1;
+  NVS[i] = 0.5 + 1.1*u2;
 }
+function varyO(i){ return PARAMS.vary>0 ? NVO[i] : 1; }
+function varyS(i){ return PARAMS.vary>0 ? NVS[i] : 1; }
 const NLKAT = new Int32Array(PMAX);
 /* ---- a branch grows forward, and takes its leaf with it ----
    A bud used to appear whole at its final place, fading in, while the leaf
@@ -2331,6 +2353,7 @@ function inherit(src,dst){
   NLSC[dst]=NLSC[src];
   NSHAPE[dst]=NSHAPE[src];
   NTL[dst]=NTL[src]; NTS[dst]=NTS[src];
+  NVO[dst]=NVO[src]; NVS[dst]=NVS[src];
 }
 function pointMutate(i){
   const r=prnd();
@@ -3323,7 +3346,7 @@ function emitNode(i, pass, w){
      * real seconds and each owes ECORATE ecology steps, so the ecology runs at
      * about 190 ticks a second whatever the time-lapse is set to, and `fadein`
      * is therefore in real time as well as in ticks. */
-    const al=PARAMS.alpha*PAINT[3];
+    const al=Math.min(1, PARAMS.alpha*varyO(i))*PAINT[3];
 
     /* the branch back to the parent: an ellipse lying along the step, centred
        between the two, so a body reads as connected structure rather than as a
@@ -3397,7 +3420,7 @@ function emitNode(i, pass, w){
       }
       /* the line that continues the parent's own branch starts at the
          parent's width and thins to its own; a side branch starts at its own */
-      const base=PARAMS.stem*NSTEP[i]*0.7;
+      const base=PARAMS.stem*varyS(i)*NSTEP[i]*0.7;
       const w2=base*widthOf(NDESC[i]);
       const w1=base*widthOf(contOf(par)===i ? NDESC[par] : NDESC[i]+1);
       const s=i*8;
@@ -3668,7 +3691,7 @@ function ghost(i){
   GHOST[g+2]= LEAF[2]>0 ? Math.max(1e-7,(PARAMS.fatlo+(PARAMS.fathi-PARAMS.fatlo)*LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3]) : 1e-7;
   GHOST[g+25]=LEAF[1];
   GHOST[g+3]=PAINT[0]; GHOST[g+4]=PAINT[1]; GHOST[g+5]=PAINT[2];
-  GHOST[g+13]=PAINT[3];
+  GHOST[g+13]=PAINT[3]*Math.min(1, varyO(i)*PARAMS.alpha)/Math.max(1e-6, PARAMS.alpha);   /* its own opacity, carried */
   GHOST[g+6]=ptick;
   GHOST[g+7]=FORMASP[(form>>2)&3];
   GHOST[g+26]=NSHAPE[i];
@@ -6611,6 +6634,11 @@ const SETTINGS = [
   lo:"plain dark", hi:"full photograph",
   why:"How bright the photograph of moss and soil under the plants is. Turned right down, the arena is the plain dark ground it used to be, which shows the plants most clearly.",
   fmt:v=>v===0?"plain":Math.round(v*100)+"%"},
+ {key:"vary", name:"Plant variation", choice:[
+    {label:"Each its own", why:"every plant family draws its own leaf opacity and branch thickness", set:{vary:1}},
+    {label:"All alike", why:"the dials above apply to every plant the same", set:{vary:0}}],
+  test:p=>p.vary>0?1:0,
+  why:"Whether each plant family varies the leaf opacity and branch thickness dials in its own direction. The dials still set the middle; a family may be more transparent or bolder than its neighbors. Descendants keep their family's look."},
  {key:"seasons", name:"Seasons", choice:[
     {label:"The year turns", why:"spring, summer, fall and winter, each a little different in color and leaf", set:{seasons:1}},
     {label:"Always summer", why:"one look, held", set:{seasons:0}}],
