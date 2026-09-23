@@ -75,7 +75,7 @@ async function run(browser, arm, seed) {
     const real = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = cb => (allowed-- > 0 ? real(cb) : 0);
   });
-  const hash = '#seed=' + seed + Object.keys(arm).map(k => '&' + k + '=' + arm[k]).join('');
+  const hash = '#seed=' + seed + '&auto=0' + Object.keys(arm).map(k => '&' + k + '=' + arm[k]).join('');
   const errs = [];
   page.on('pageerror', e => errs.push(String(e)));
   await page.goto(PAGE + hash, { waitUntil: 'load' });

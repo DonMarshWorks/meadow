@@ -929,6 +929,11 @@ const PARAMS = {
   plants:  1,       // 0 turns the whole thing off
   seeds:   40,      // starting nodes
   budget:  60000,   // hard cap on nodes, living and standing wood together
+  auto:    1,       // size the world to the machine: a slow one grows bigger
+                    // plants, so fewer nodes cover the same ground and the
+                    // ticks stay short. See sizeToMachine. 0 keeps the step
+                    // named above whatever the machine; naming step in the
+                    // address does the same, since that is a choice made.
   prerun:  1200,    // ticks run before the first frame is shown. An empty
                     // arena is not this piece — the first thing anybody would
                     // see is forty dots, and the succession the whole thing is
@@ -5890,13 +5895,43 @@ function hLast(k){
    forty dots, and the succession the whole thing is about takes a while to
    start turning. So the world is run forward before the first frame, far
    enough that plants have met each other and something has already died. */
+/* ---- sizing the world to the machine ----
+   A Fire TV ran one tick of the default world in 50ms and its plants moved
+   three times a second; the same stick runs a world of plants two and a half
+   times the size, a fifth of the nodes, at full pace (2026-09-23). Don chose
+   this over one world for every machine: a slow device is to get good motion
+   and a different world, and the link it writes names the step it chose, so
+   the world it shows is still the world the link reproduces.
+   The measure is the first AUTO_TICKS ticks after seeding, which are the same
+   work on any machine, against what they cost on the desktop this was built
+   on. Step grows as the square root of the shortfall, since nodes go as the
+   inverse square of it; the constants were fitted to a CPU throttled four and
+   ten times, which is where the probe reads 2.9 and 8 to 9.
+   It is decided by reloading, because the step sizes every bin and grid at
+   load. Whoever names step in the address has decided already. */
+const AUTO_TICKS = 150, AUTO_REF = 55, AUTO_OK = 2.5;
+let sized = {probeMs:0, factor:0, step:0};
+function sizeToMachine(ms){
+  const f = ms/AUTO_REF;
+  sized = {probeMs:+ms.toFixed(0), factor:+f.toFixed(2), step:0};
+  if(PARAMS.auto<=0 || /[#&]step=/.test(location.hash||"") || f < AUTO_OK) return false;
+  const step = Math.min(0.06, Math.round(0.03*Math.sqrt(f/AUTO_OK)*200)/200);
+  sized.step = step;
+  if(step <= PARAMS.step) return false;
+  const h = location.hash||"#", base = location.href.split('#')[0].split('?')[0];
+  location.replace(base + '?r=' + Date.now() + h + (h.length>1 ? '&' : '') + 'step=' + step);
+  return true;
+}
 let buildMs = 0;
 function seedWorld(){
   const t0=performance.now();
   tickGen=null;                 /* a tick of the world before this one */
   ptick=0;
   plantsSeed();
-  for(let i=0;i<PARAMS.prerun;i++) plantsStep();
+  const probe=Math.min(PARAMS.prerun|0, AUTO_TICKS);
+  for(let i=0;i<probe;i++) plantsStep();
+  if(sizeToMachine(performance.now()-t0)) return;
+  for(let i=probe;i<PARAMS.prerun;i++) plantsStep();
   pruneFragments();
   buildMs = performance.now()-t0;
 }
@@ -9679,6 +9714,8 @@ window.__world = {
   /* what took plants, or limbs of twenty nodes and more, and how big */
   deathLog(){ return DLOG.slice(); },
   runWorld(ticks){ for(let i=0;i<(ticks|0);i++) plantsStep(); },
+  /* what the sizing probe measured and what, if anything, it chose */
+  sized(){ return Object.assign({}, sized); },
   /* the same ticks, stopped and resumed at EVERY point a tick may yield. It
      must leave the world byte for byte where runWorld leaves it. */
   runSliced(ticks){ let slices=0; for(let i=0;i<(ticks|0);i++){ while(!plantsSlice(1)) slices++; } return slices; },

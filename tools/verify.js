@@ -199,7 +199,9 @@ async function open(browser, hash, size, frames) {
      asks for five thousand ticks of it. At ten milliseconds a tick that is
      longer than the default thirty seconds, and the run died of a timeout
      with every real check behind it green. */
-  await page.goto(`http://127.0.0.1:${PORT}/index.html` + (hash || ''), { waitUntil: 'load', timeout: 300000 });
+  /* auto=0: the page sizes its world to the machine, and a slow build machine
+     must test the same world as a fast one */
+  await page.goto(`http://127.0.0.1:${PORT}/index.html` + (hash || '#') + '&auto=0', { waitUntil: 'load', timeout: 300000 });
   await page.waitForFunction(() => window.__world && window.__world.plants, null, { timeout: 180000 });
   page.__errs = errs;
   return page;
