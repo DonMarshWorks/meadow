@@ -1357,10 +1357,15 @@ const PARAMS = {
   vary:    1,       // each lineage draws its own leaf opacity and branch
                     // thickness, as multipliers on the dials: see freshTone.
                     // 0 paints every plant alike. Paint only either way.
+  style:   1,       // the look drifts: leaf size, opacity, branch thickness
+                    // and saturation each wander between random goals, as
+                    // multipliers on the dials. See styleAt. 0 holds them.
   seasons: 1,       // the year turns: see seasonAt. 0 holds summer for ever
   season:  3,       // minutes a season lasts, 1 to 10
   seasonat: -1,     // hold the year at a point, 0 to 4 (2.5 is the middle of
                     // fall), for a picture; -1 lets it turn
+  styleat: -1,      // hold the style clock at a moment, in seconds, for a
+                    // picture or a probe; -1 lets it drift
   sat:     0.60,    // how saturated the colours are, 0..1. 1 is as vivid as the
                     // palette goes; lower is more muted and more lifelike.
                     // Hue and lightness are untouched, so plants stay apart.
@@ -1592,7 +1597,7 @@ const LEAFFIT = [1, 1.12, 0.90, 0.74, 0.84, 1, 1, 0.84, 1, 1, 0.94, 1.08, 1.00];
 function leafLook(i){
   /* with a child on it a node has no leaf, at once: its first child took it */
   const dt=(ptick-NLKAT[i])/LEAFT, open = NLK[i]>0 ? 0 : dt;
-  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf;
+  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf*STYLE.leaf;
   if(LEAF[3]<=0){ LEAF[0]=0; LEAF[1]=1; LEAF[2]=0; return; }
   if(NLIVE[i]===2){
     const wf = WOODFADE>0 ? Math.min(1,(ptick-NWOODAT[i])/WOODFADE) : 1;
@@ -2825,6 +2830,51 @@ function sampleSeason(){
   const per = Math.max(0.1, PARAMS.season)*60;
   seasonAt((SEASON0 + performance.now()/1000/per)%4, SEASON);
 }
+/* ---- style drift ----
+   The look wanders (Don, 2026-09-23): four dials each walk between random
+   goals, independently, so the picture is sometimes realistic, sometimes
+   flat and bold, sometimes faint, and the art evolves as the plants do. Each
+   is a MULTIPLIER on the dial a viewer set — the setting is untouched and the
+   link carries only the setting — inside a range that never reaches the ugly
+   ends. A walk is a chain of segments, each a goal and a length of a fraction
+   of a season, generated from the seed, the walk and the segment number, so
+   the same seed drifts the same way from the same moment. Sampled once per
+   build beside the season; a dial a person moves leaves the walk (styleTouch)
+   until the page is reloaded. */
+const STYLE_W = [
+  {key:"leaf",  lo:0.60, hi:1.60},
+  {key:"alpha", lo:0.55, hi:1.40},
+  {key:"stem",  lo:0.50, hi:1.80},
+  {key:"sat",   lo:0.60, hi:1.30}];
+const STYLE = {leaf:1, alpha:1, stem:1, sat:1};
+const STYLE_ST = STYLE_W.map((w,k)=>({seg:0, t0:0, t1:0, from:1, to:1, held:false}));
+function styleU(walk, seg, salt){
+  let h = Math.imul((SEED|0) ^ Math.imul(walk+1, 0x9E3779B1) ^ Math.imul(seg+1, 0x85EBCA6B) ^ salt, 0xC2B2AE35);
+  h ^= h>>>15; h = Math.imul(h, 0x2C1B3C6D); h ^= h>>>12;
+  return (h>>>0)/4294967296;
+}
+function styleAt(secs, per){
+  for(let k=0;k<STYLE_W.length;k++){
+    const w=STYLE_W[k], st=STYLE_ST[k];
+    if(st.held){ STYLE[w.key]=1; continue; }
+    while(secs >= st.t1){
+      st.seg++; st.t0 = st.t1; st.from = st.to;
+      st.to = w.lo + (w.hi-w.lo)*styleU(k, st.seg, 0x1234);
+      st.t1 = st.t0 + per*(0.4 + 0.8*styleU(k, st.seg, 0x5678));
+    }
+    const u = Math.max(0, Math.min(1, (secs-st.t0)/Math.max(1e-6, st.t1-st.t0)));
+    STYLE[w.key] = st.from + (st.to-st.from)*u*u*(3-2*u);
+  }
+}
+function sampleStyle(){
+  if(PARAMS.style<=0){ STYLE.leaf=STYLE.alpha=STYLE.stem=STYLE.sat=1; return; }
+  styleAt(PARAMS.styleat>=0 ? PARAMS.styleat : performance.now()/1000, Math.max(0.1, PARAMS.season)*60);
+}
+/* a dial a person moves is theirs: its walk stops and reads 1 */
+function styleTouch(key){
+  const k = key==="__leaf" ? "leaf" : key;
+  for(let i=0;i<STYLE_W.length;i++) if(STYLE_W[i].key===k) STYLE_ST[i].held = true;
+}
 function nodeColour(i,out){
   let h = wheelDeg(NHUE[i] - hueOwed(i)), satx = 1;
   if(SEASON.k>0){
@@ -2846,7 +2896,7 @@ function nodeColour(i,out){
   const turn = Math.min(1, Math.abs(NANG[i])/Math.max(1e-6, PARAMS.angmax*0.6));
   /* and the whole of it scaled by a taste dial: vivid is pretty and muted
      is lifelike, and which is wanted is the viewer's call. Read live. */
-  const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i]*SEASON.sat*satx)*Math.max(0, Math.min(1, PARAMS.sat));
+  const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i]*SEASON.sat*STYLE.sat*satx)*Math.max(0, Math.min(1, PARAMS.sat));
   /* Lightness is age: light at birth, darkening over the node's life, so
      the growing edge of a plant is bright and its old interior is deep. */
   const age = Math.min(1, (ptick-NBORN[i])/Math.max(1, NLIFE[i]));
@@ -3346,7 +3396,7 @@ function emitNode(i, pass, w){
      * real seconds and each owes ECORATE ecology steps, so the ecology runs at
      * about 190 ticks a second whatever the time-lapse is set to, and `fadein`
      * is therefore in real time as well as in ticks. */
-    const al=Math.min(1, PARAMS.alpha*varyO(i))*PAINT[3];
+    const al=Math.min(1, PARAMS.alpha*varyO(i)*STYLE.alpha)*PAINT[3];
 
     /* the branch back to the parent: an ellipse lying along the step, centred
        between the two, so a body reads as connected structure rather than as a
@@ -3420,7 +3470,7 @@ function emitNode(i, pass, w){
       }
       /* the line that continues the parent's own branch starts at the
          parent's width and thins to its own; a side branch starts at its own */
-      const base=PARAMS.stem*varyS(i)*NSTEP[i]*0.7;
+      const base=PARAMS.stem*varyS(i)*STYLE.stem*NSTEP[i]*0.7;
       const w2=base*widthOf(NDESC[i]);
       const w1=base*widthOf(contOf(par)===i ? NDESC[par] : NDESC[i]+1);
       const s=i*8;
@@ -3517,7 +3567,7 @@ const LEAF0 = (MAXINST>>1)*INST;
 function beginInstances(){
   let w=0;
   paintFor = -1;
-  sampleSeason();
+  sampleSeason(); sampleStyle();
   const WLIM=(MAXINST-2)*INST;
   const _g0 = performance.now();
   orderGhosts();
@@ -3691,7 +3741,7 @@ function ghost(i){
   GHOST[g+2]= LEAF[2]>0 ? Math.max(1e-7,(PARAMS.fatlo+(PARAMS.fathi-PARAMS.fatlo)*LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3]) : 1e-7;
   GHOST[g+25]=LEAF[1];
   GHOST[g+3]=PAINT[0]; GHOST[g+4]=PAINT[1]; GHOST[g+5]=PAINT[2];
-  GHOST[g+13]=PAINT[3]*Math.min(1, varyO(i)*PARAMS.alpha)/Math.max(1e-6, PARAMS.alpha);   /* its own opacity, carried */
+  GHOST[g+13]=PAINT[3]*Math.min(1, varyO(i)*STYLE.alpha*PARAMS.alpha)/Math.max(1e-6, PARAMS.alpha);   /* its own opacity, carried */
   GHOST[g+6]=ptick;
   GHOST[g+7]=FORMASP[(form>>2)&3];
   GHOST[g+26]=NSHAPE[i];
@@ -6639,6 +6689,11 @@ const SETTINGS = [
     {label:"All alike", why:"the dials above apply to every plant the same", set:{vary:0}}],
   test:p=>p.vary>0?1:0,
   why:"Whether each plant family varies the leaf opacity and branch thickness dials in its own direction. The dials still set the middle; a family may be more transparent or bolder than its neighbors. Descendants keep their family's look."},
+ {key:"style", name:"Style drift", choice:[
+    {label:"Drifting", why:"leaf size, opacity, branch thickness and color each wander on their own", set:{style:1}},
+    {label:"Held", why:"the dials mean exactly what they say", set:{style:0}}],
+  test:p=>p.style>0?1:0,
+  why:"Whether the look slowly wanders. Leaf size, leaf opacity, branch thickness and color each drift between random goals over a season or so, independently, so the picture is sometimes realistic, sometimes bold and flat, sometimes faint. The dials set the middle of each drift; moving a dial takes it out of the drift."},
  {key:"seasons", name:"Seasons", choice:[
     {label:"The year turns", why:"spring, summer, fall and winter, each a little different in color and leaf", set:{seasons:1}},
     {label:"Always summer", why:"one look, held", set:{seasons:0}}],
@@ -7105,7 +7160,7 @@ function buildControl(item, withEnds){
     const show=()=>{ val.textContent=item.fmt(PARAMS[lo],PARAMS[hi]); };
     const sl=makeSlider({min:item.min, max:item.max, step:item.step, label:item.name,
       values:[PARAMS[lo], PARAMS[hi]],
-      onInput:vv=>{ PARAMS[lo]=vv[0]; PARAMS[hi]=vv[1]; markTouched(); show(); writeHash();
+      onInput:vv=>{ PARAMS[lo]=vv[0]; PARAMS[hi]=vv[1]; markTouched(); styleTouch(item.key); show(); writeHash();
                     applyLive(); }});
     box.appendChild(sl.el); if(withEnds) box.appendChild(ends(item)); show();
   } else {
@@ -7122,7 +7177,7 @@ function buildControl(item, withEnds){
     const show=()=>{ val.textContent=item.fmt?item.fmt(PARAMS[item.key]):PARAMS[item.key]; };
     const sl=makeSlider({min:item.min, max:item.max, step:item.step, label:item.name,
       values:[toUI(PARAMS[item.key])],
-      onInput:vv=>{ PARAMS[item.key]=toUI(vv[0]); markTouched(); show(); writeHash();
+      onInput:vv=>{ PARAMS[item.key]=toUI(vv[0]); markTouched(); styleTouch(item.key); show(); writeHash();
                     if(item.restart) markRestart();
                     else { if(item.live) item.live(PARAMS[item.key]); applyLive(); } }});
     box.appendChild(sl.el); if(withEnds) box.appendChild(ends(item)); show();
@@ -9815,6 +9870,7 @@ window.__world = {
   /* what the sizing probe measured and what, if anything, it chose */
   sized(){ return Object.assign({}, sized); },
   season(){ sampleSeason(); return Object.assign({}, SEASON); },
+  style(){ sampleStyle(); return Object.assign({}, STYLE); },
   seasonAt(t){ return seasonAt(t, {}); },
   /* the same ticks, stopped and resumed at EVERY point a tick may yield. It
      must leave the world byte for byte where runWorld leaves it. */
