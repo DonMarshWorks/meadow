@@ -4674,11 +4674,12 @@ function setTurn(i){
 }
 /* A slice of the nodes re-read their turn every tick, on a rolling cursor
    like the reaper's, so every node reads about once per `look` ticks. */
-function lookTurns(){
+function* lookTurns(){
   if(nodeHigh===0) return;
   const look = Math.max(1, PARAMS.look|0);
   const slice = Math.max(32, Math.ceil(nodeHigh/look));
   for(let n=0;n<slice;n++){
+    if((n&63)===63 && sliceOver()) yield;
     const i = lookCursor++; if(lookCursor>=nodeHigh) lookCursor=0;
     if(NLIVE[i]!==1) continue;
     runProgram(i);
@@ -4788,7 +4789,7 @@ function spoil(w, got){
     j=NPAR[j];
   }
 }
-function movePlants(){
+function* movePlants(){
   if(nodeHigh===0) return;
   const dt = Math.max(1, PARAMS.mstep|0), bend = Math.max(0, PARAMS.bend);
   /* child lists, so bodies can be walked downward: parents are not lower
@@ -4800,6 +4801,7 @@ function movePlants(){
   for(let i=0;i<nodeHigh;i++) if(NLIVE[i]!==0 && rooted(i)) CHILD[CFILL[NPAR[i]]++]=i;
   /* a branch whose continuing child has gone hands the line to the next */
   for(let i=0;i<nodeHigh;i++) if(NLIVE[i]!==0 && COFF[i+1]>COFF[i] && contOf(i)<0) NCONT[i]=CHILD[COFF[i]];
+  if(sliceOver()) yield;
 
   for(let r=0;r<nodeHigh;r++){
     if(NLIVE[r]===0 || rooted(r)) continue;
@@ -4841,6 +4843,9 @@ function movePlants(){
     /* the load each joint carries: children were visited after their
        parents, so walking the visit order backwards sums the subtree */
     while(vn>0){ const c=VIS[--vn]; NDESC[NPAR[c]] += NDESC[c]+1; }
+    /* between bodies and never inside one: a plant is drawn all moved or
+       not at all, and its loads are whole */
+    if(sliceOver()){ plantsDirty=true; yield; }
   }
   plantsDirty=true;
 
@@ -4865,6 +4870,7 @@ function movePlants(){
   ROTQ.length=0;
   const r2=(1.1*PCELL)*(1.1*PCELL), eps2=(0.1*PCELL)*(0.1*PCELL);
   for(let i=0;i<nodeHigh;i++){
+    if((i&255)===255 && sliceOver()) yield;
     if(NLIVE[i]!==1) continue;
     const mx=NX[i]-NCX[i], my=NY[i]-NCY[i];
     if(mx*mx+my*my < eps2 && NCR[i]===PROOT[i]) continue;
@@ -4912,7 +4918,36 @@ function movePlants(){
    would make a large plant spend its turns on interior nodes that cannot grow,
    and the size distribution would then be set by that accident rather than by
    anything chosen. */
+/* ---- a tick that can stop part way ----
+   One tick of a full arena is 50ms on a Fire TV and a movement step 170, and
+   a function cannot be interrupted, so that machine drew 14 frames a second
+   with its GPU idle (2026-09-21). The tick is a GENERATOR now: it may hand
+   the frame back between bodies, between blocks of nodes and between buds,
+   and carries on from there in the next frame. Nothing else touches the
+   world in between — a frame only reads it — so the order of every write
+   and every random draw is exactly what it was, and a tick run in a hundred
+   slices is the tick run in one. plantsStep is the same generator driven
+   straight to its end, which is what every harness and the prerun call, so
+   there is ONE implementation and no second copy to drift. runSliced() in
+   the test hooks yields at every opportunity, to prove it. */
+let tickGen = null, sliceEnd = 0;
+function sliceOver(){ return sliceEnd > 0 && performance.now() >= sliceEnd; }
 function plantsStep(){
+  const e = sliceEnd; sliceEnd = 0;
+  if(!tickGen) tickGen = plantsTick();
+  while(!tickGen.next().done){}
+  tickGen = null; sliceEnd = e;
+}
+/* run until the clock says stop; true when a tick was completed */
+function plantsSlice(endMs){
+  sliceEnd = endMs;
+  if(!tickGen) tickGen = plantsTick();
+  const done = tickGen.next().done;
+  sliceEnd = 0;
+  if(done) tickGen = null;
+  return done;
+}
+function* plantsTick(){
   if(!plantsOn) return;
   ptick++;
   admitMature();
@@ -4921,10 +4956,13 @@ function plantsStep(){
   /* after the sweep, not before: the sweep is what re-roots a severed piece,
      and a piece re-rooted after the contact test would stand inside its old
      body until the next step */
+  if(sliceOver()) yield;
   if(PARAMS.sway>0){
-    lookTurns();
-    if(ptick%Math.max(1,PARAMS.mstep|0)===0) movePlants();
+    yield* lookTurns();
+    if(sliceOver()) yield;
+    if(ptick%Math.max(1,PARAMS.mstep|0)===0) yield* movePlants();
   }
+  if(sliceOver()) yield;
 
   /* Attempts used to be drawn from one global frontier, which made a form's
      growth proportional to how much of the world it already held — so the
@@ -4936,6 +4974,7 @@ function plantsStep(){
   const vote = Math.max(1, PARAMS.vote|0), vmem = PARAMS.vmem, tries = PARAMS.tries|0;
   let tried=0, guard=cap*8;
   while(tried < cap && guard-- > 0 && frontN > 0 && (liveN+woodN) < PMAX){
+    if(sliceOver()) yield;
     /* Vigour ranks nodes *within* a body and never bodies against each other.
        A tournament between whichever tips happen to be drawn would do the
        opposite, and the runaway is obvious: the lineage that shouts loudest
@@ -5854,6 +5893,7 @@ function hLast(k){
 let buildMs = 0;
 function seedWorld(){
   const t0=performance.now();
+  tickGen=null;                 /* a tick of the world before this one */
   ptick=0;
   plantsSeed();
   for(let i=0;i<PARAMS.prerun;i++) plantsStep();
@@ -5870,7 +5910,9 @@ let ecoDebt = 0;
 let res = 1;                           // adaptive resolution multiplier
 let lastFrameMs = 16.7;
 let lastBudget = 0, workSum = 0;
-let raisedFrom = 0, raiseHold = 0;     // the frame rate a climb started from, and when the next may be tried
+let gpuLast = 0, gpuFresh = false;
+const GPUPX = new Uint8Array(4);
+let gpuMs = 0, gpuAt = 0;              // how long the GPU took over one frame's draws, and when that was last asked
 let govWork = 0;                       // the frames' own work since the governor last looked
 let otherMs = 4, slowFrames = false;   // the frame's work apart from the ecology; and whether 60 is out of reach
 
@@ -5904,29 +5946,33 @@ function meterFps(now){
        a picture that shimmers between two versions of itself is worse than
        either. */
     const before = res;
-    /* Fewer pixels only help a frame that is WAITING for them. A Fire TV
+    /* Fewer pixels only help a frame the GPU is slow to draw. A Fire TV
        measured 14 frames a second with 69 of every 71 milliseconds spent in
        this page's own JavaScript: its GPU was idle, and the governor had cut
        the picture to 806x453 on a 1080p screen for nothing, because all it
-       looked at was the frame rate (2026-09-21). So the share of the frame
-       not accounted for by our own work decides: under a tenth, the pixels
-       are free and resolution climbs whatever the frame rate; over a third
-       and slow, it falls. Far apart, for the reason the old pair was. */
-    const wait = Math.max(0, 1 - (govWork/Math.max(1,fpsFramesWas))/(1000/Math.max(1,fpsNow)));
+       looked at was the frame rate (2026-09-21). Two indirect tests were
+       tried and both failed. The share of the frame our work does not account
+       for reads a 20ms frame shown at the next 33ms refresh as 40% "waiting",
+       for a display no number of pixels will hurry; and putting each change
+       on probation against the frame rate was decided by noise, which is a
+       fifth either way in half a second on a busy CPU. So the GPU is timed:
+       gpuMs is how long the GPU took over a frame's draws, sampled every
+       couple of seconds (see the frame loop), and each sample is acted on
+       ONCE: read every half second, one slow sample stood for four seconds
+       and walked the resolution down eight steps. Far apart, as the old pair
+       was. */
     govWork = 0;
-    /* A driver may make us wait INSIDE a GL call, where the wait is counted
-       as our own work and the test above cannot see it. So a climb is on
-       probation: if the frame rate falls by a quarter after one, it is taken
-       back and not tried again for half a minute. */
-    if(raisedFrom > 0 && fpsNow < 0.75*raisedFrom && res > PARAMS.minres){
-      res = Math.max(PARAMS.minres, res-0.04); raiseHold = now + 30000; raisedFrom = 0;
+    if(gpuFresh){
+      gpuFresh = false;
+      /* in FRAMES, not milliseconds: the read waits for every frame still
+         queued, so it measures how far the GPU has fallen behind. 1.3 frames
+         at 120fps with nothing to do, 7 with multisampling on and the GPU
+         the limit, a third under a slow CPU. */
+      const behind = gpuMs*fpsNow/1000;
+      if(fpsNow < 34 && behind > 1.5 && res > PARAMS.minres) res = Math.max(PARAMS.minres, res-0.08);
+      else if(behind < 0.75 && res < 1)                       res = Math.min(1, res+0.04);
     }
-    else if(fpsNow < 34 && wait > 0.35 && res > PARAMS.minres){ res = Math.max(PARAMS.minres, res-0.08); raisedFrom = 0; }
-    else if((fpsNow > 54 || (wait < 0.10 && now > raiseHold)) && res < 1){
-      raisedFrom = fpsNow > 54 ? 0 : fpsNow;
-      res = Math.min(1, res+0.04);
-    }
-    else raisedFrom = 0;
+    else if(fpsNow > 54 && res < 1) res = Math.min(1, res+0.04);
     if(res !== before) resize();
     /* and how much of a frame the rebuild may take. Sliced rather than
        skipped: the same milliseconds spread evenly instead of arriving in a
@@ -5934,7 +5980,10 @@ function meterFps(now){
     /* which frame to budget the ecology against. Far apart for the reason
        the resolution's pair is: between them nothing changes its mind. */
     if(fpsNow < 40) slowFrames = true; else if(fpsNow > 55) slowFrames = false;
-    sheetSlice = fpsNow < 50 ? Math.max(1.5, 1000/Math.max(1,fpsNow)*0.20) : 0;
+    /* a fifth of the frame, but of a frame worth having: taken from the frame
+       rate alone, a slow machine's long frames bought the rebuild a longer
+       slice, which made longer frames — 20ms of every frame at 10fps */
+    sheetSlice = fpsNow < 50 ? Math.min(8, Math.max(1.5, 1000/Math.max(1,fpsNow)*0.20)) : 0;
   }
 }
 
@@ -5979,8 +6028,8 @@ function frame(now){
     const budget = Math.min(PARAMS.ecomax,
                      Math.max(frameMs*PARAMS.ecoshare, frameMs*0.85 - otherMs));
     lastBudget = budget;
-    while(ecoDebt >= 1){
-      plantsStep(); ecoDebt -= 1; didTicks++;
+    while(ecoDebt >= 1 || tickGen){
+      if(plantsSlice(_s0+budget)){ ecoDebt -= 1; didTicks++; }
       if(performance.now()-_s0 >= budget) break;
     }
   }
@@ -6002,6 +6051,19 @@ function frame(now){
 
   drawGround();
   renderPlants();
+  /* One frame in a couple of seconds waits for the GPU to finish, and the
+     wait is the measurement (gl.readPixels below). The larger of the last two, so one lucky frame
+     cannot raise the resolution. It costs that frame its overlap with the
+     GPU and nothing else. */
+  if(now - gpuAt > 2000){
+    gpuAt = now;
+    /* a read of one pixel, because that cannot return until the pixel
+       exists. gl.finish() was the obvious call and in Chrome returns at
+       once: it measured 0.1ms on a GPU that was the whole frame. */
+    const g0 = performance.now(); gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,GPUPX);
+    const g = performance.now() - g0;
+    gpuMs = Math.max(g, gpuLast); gpuLast = g; gpuFresh = true;
+  }
   gl.disable(gl.SCISSOR_TEST);
 
   /* the readout is a second thing, and it does not need sixty of them */
@@ -6078,7 +6140,7 @@ function showPerf(now){
        the larger, the wait is for the GPU or the display and no amount of
        cheaper JavaScript will shorten it. The budget and the rate asked for
        also say which frame loop a cached page is actually running. */
-    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed)+"/s",
+    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed)+"/s   gpu "+gpuMs.toFixed(1),
     "sim    "+(PERF.sim/f).toFixed(1)+" / "+PERF.wsim.toFixed(1)+"      "+PERF.ticks+" ticks  ("+simRate.toFixed(0)+"/s)",
     "sheet  "+(PERF.sheet/f).toFixed(1)+" / "+PERF.wsheet.toFixed(1)+"      "+PERF.sheets+" rebuilds",
     "  ghost "+PERF.bghost.toFixed(1)+"  sort "+PERF.bsort.toFixed(1)+"  emit "+PERF.bemit.toFixed(1)+"  up "+PERF.supload.toFixed(1),
@@ -9617,6 +9679,9 @@ window.__world = {
   /* what took plants, or limbs of twenty nodes and more, and how big */
   deathLog(){ return DLOG.slice(); },
   runWorld(ticks){ for(let i=0;i<(ticks|0);i++) plantsStep(); },
+  /* the same ticks, stopped and resumed at EVERY point a tick may yield. It
+     must leave the world byte for byte where runWorld leaves it. */
+  runSliced(ticks){ let slices=0; for(let i=0;i<(ticks|0);i++){ while(!plantsSlice(1)) slices++; } return slices; },
   growPlants(ticks){ for(let i=0;i<(ticks|0);i++) plantsStep(); },
 
   /* ---- assertions ----
