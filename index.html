@@ -1597,7 +1597,7 @@ const LEAFFIT = [1, 1.12, 0.90, 0.74, 0.84, 1, 1, 0.84, 1, 1, 0.94, 1.08, 1.00];
 function leafLook(i){
   /* with a child on it a node has no leaf, at once: its first child took it */
   const dt=(ptick-NLKAT[i])/LEAFT, open = NLK[i]>0 ? 0 : dt;
-  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf*STYLE.leaf;
+  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf;
   if(LEAF[3]<=0){ LEAF[0]=0; LEAF[1]=1; LEAF[2]=0; return; }
   if(NLIVE[i]===2){
     const wf = WOODFADE>0 ? Math.min(1,(ptick-NWOODAT[i])/WOODFADE) : 1;
@@ -2842,11 +2842,19 @@ function sampleSeason(){
    build beside the season; a dial a person moves leaves the walk (styleTouch)
    until the page is reloaded. */
 const STYLE_W = [
-  {key:"leaf",  lo:0.60, hi:1.60},
+  {key:"fatlo", lo:0.60, hi:1.60},      /* the two ends of the leaf-size range walk apart (Don, 2026-09-25) */
+  {key:"fathi", lo:0.60, hi:1.60},
   {key:"alpha", lo:0.55, hi:1.40},
   {key:"stem",  lo:0.50, hi:1.80},
   {key:"sat",   lo:0.60, hi:1.30}];
-const STYLE = {leaf:1, alpha:1, stem:1, sat:1};
+const STYLE = {fatlo:1, fathi:1, alpha:1, stem:1, sat:1};
+/* a leaf's drawn width at s of its growth, from the range as the dials and the
+   drift have it; the ends may cross and are simply put back in order */
+function leafW(s){
+  let lo=PARAMS.fatlo*STYLE.fatlo, hi=PARAMS.fathi*STYLE.fathi;
+  if(lo>hi){ const t=lo; lo=hi; hi=t; }
+  return lo+(hi-lo)*s;
+}
 const STYLE_ST = STYLE_W.map((w,k)=>({seg:0, t0:0, t1:0, from:1, to:1, held:false}));
 function styleU(walk, seg, salt){
   let h = Math.imul((SEED|0) ^ Math.imul(walk+1, 0x9E3779B1) ^ Math.imul(seg+1, 0x85EBCA6B) ^ salt, 0xC2B2AE35);
@@ -2867,13 +2875,15 @@ function styleAt(secs, per){
   }
 }
 function sampleStyle(){
-  if(PARAMS.style<=0){ STYLE.leaf=STYLE.alpha=STYLE.stem=STYLE.sat=1; return; }
+  if(PARAMS.style<=0){ STYLE.fatlo=STYLE.fathi=STYLE.alpha=STYLE.stem=STYLE.sat=1; return; }
   styleAt(PARAMS.styleat>=0 ? PARAMS.styleat : performance.now()/1000, Math.max(0.1, PARAMS.season)*60);
 }
 /* a dial a person moves is theirs: its walk stops and reads 1 */
 function styleTouch(key){
-  const k = key==="__leaf" ? "leaf" : key;
-  for(let i=0;i<STYLE_W.length;i++) if(STYLE_W[i].key===k) STYLE_ST[i].held = true;
+  for(let i=0;i<STYLE_W.length;i++){
+    const k=STYLE_W[i].key;
+    if(k===key || (key==="__leaf" && (k==="fatlo" || k==="fathi"))) STYLE_ST[i].held = true;
+  }
 }
 function nodeColour(i,out){
   let h = wheelDeg(NHUE[i] - hueOwed(i)), satx = 1;
@@ -3362,7 +3372,7 @@ function emitNode(i, pass, w){
        leaves in the world may be. Setting the low knob to zero lets the
        smallest forms vanish and leaves the branching bare. */
     leafLook(i);
-    let wid=(PARAMS.fatlo+(PARAMS.fathi-PARAMS.fatlo)*LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3];
+    let wid=leafW(LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3];
     let leafK=LEAF[1]; const leafOn=LEAF[2]>0;
     const asp=FORMASP[(form>>2)&3];
 
@@ -3738,7 +3748,7 @@ function ghost(i){
      no size is skipped whole — so a bare node's ghost keeps a size too small
      to cover a pixel. */
   leafLook(i);
-  GHOST[g+2]= LEAF[2]>0 ? Math.max(1e-7,(PARAMS.fatlo+(PARAMS.fathi-PARAMS.fatlo)*LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3]) : 1e-7;
+  GHOST[g+2]= LEAF[2]>0 ? Math.max(1e-7,leafW(LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3]) : 1e-7;
   GHOST[g+25]=LEAF[1];
   GHOST[g+3]=PAINT[0]; GHOST[g+4]=PAINT[1]; GHOST[g+5]=PAINT[2];
   GHOST[g+13]=PAINT[3]*Math.min(1, varyO(i)*STYLE.alpha*PARAMS.alpha)/Math.max(1e-6, PARAMS.alpha);   /* its own opacity, carried */
@@ -3881,7 +3891,7 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
   if(par>=0 && NLK[par]===0 && NLIVE[par]===1){
     leafLook(par);
     if(LEAF[2]>0){
-      NLW0[i]=(PARAMS.fatlo+(PARAMS.fathi-PARAMS.fatlo)*LEAF[0])*NSTEP[par]*NLSC[par]*LEAF[3];
+      NLW0[i]=leafW(LEAF[0])*NSTEP[par]*NLSC[par]*LEAF[3];
       NLD0[i]=LEAF[1];
       nodePaint(par, PAINT); paintFor=-1;
       NC0[i*3]=PAINT[0]; NC0[i*3+1]=PAINT[1]; NC0[i*3+2]=PAINT[2];
@@ -6289,6 +6299,26 @@ addEventListener("pointerdown", e=>{
   while(perfTaps.length && t-perfTaps[0] > 3000) perfTaps.shift();
   if(perfTaps.length >= 5){ perfTaps.length=0; setPerf(!perfOn); }
 }, {capture:true, passive:true});
+function seasonLine(){
+  if(PARAMS.seasons<=0) return "season held: always summer";
+  const u=SEASON.t-Math.floor(SEASON.t);
+  const next=SEASONS[(Math.floor(SEASON.t)+1)&3].name;
+  const phase = u<0.2 ? "arriving" : (u>0.8 ? "turning to "+next : "");
+  return "season "+SEASON.name+"  "+Math.round(u*100)+"%  "+phase+
+         "   hue->"+Math.round(SEASON.hue)+" x"+SEASON.k.toFixed(2)+"  sat x"+SEASON.sat.toFixed(2)+
+         "  light "+(SEASON.light>=0?"+":"")+SEASON.light.toFixed(2)+"  leaf x"+SEASON.leaf.toFixed(2);
+}
+function styleLine(){
+  if(PARAMS.style<=0) return "style  held";
+  const parts=[];
+  for(let k=0;k<STYLE_W.length;k++){
+    const w=STYLE_W[k], st=STYLE_ST[k], v=STYLE[w.key];
+    if(st.held){ parts.push(w.key+" x1 (yours)"); continue; }
+    const arrow = Math.abs(st.to-v)<0.005 ? "=" : (st.to>v ? "↑" : "↓");
+    parts.push(w.key+" x"+v.toFixed(2)+arrow+st.to.toFixed(2));
+  }
+  return "style  "+parts.join("   ");
+}
 function showPerf(now){
   perfEl.classList.add("on");
   /* THIS frame's share is the sum now less the sum a frame ago. Until
@@ -6316,7 +6346,11 @@ function showPerf(now){
     "draw   "+(PERF.draw/f).toFixed(1)+" / "+PERF.wdraw.toFixed(1)+"      "+PERF.sinst+" instances",
     "nodes  "+liveN+" live  "+woodN+" wood  "+comps+" plants",
     GLINFO,
-    "key    "+lastKey
+    "key    "+lastKey,
+    /* the year and the drift, as the last build sampled them: the season,
+       how far through it, and each walk's multiplier with where it is going */
+    seasonLine(),
+    styleLine()
   ];
   perfEl.textContent = L.join("\n");
   simRate = PERF.ticks*1000/(now-perfT0);
