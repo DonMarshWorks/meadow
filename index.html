@@ -1326,10 +1326,12 @@ const PARAMS = {
                     // 5,000 is four and a half times. 0 = every branch alike.
   stemdark: 0.50,   // how much darker a branch is than the nodes it joins. The
                     // structure reads far better when the two separate.
-  taperk:  4,       // how the thickness is spread along a branch: 0 is an even
-                    // cone, and the higher it is the longer the ends stay
-                    // thin and the more of it is at the base. At 4 the outer
-                    // half of a branch has under an eighth of the root's.
+  taperp:  2.0,     // a branch holding a share x of its plant's nodes has x to
+                    // this power of the trunk's thickness (2.0, set by Don after 0.6, 0.8 and 1.0 were each not steep enough: a tenth of the plant is a hundredth of the trunk; the next lines describe 0.8): at 0.8 a tenth of
+                    // the plant is a sixth of the trunk and a hundredth is a
+                    // fortieth, so the ends are fine for a long way. It was
+                    // 0.6, and with the trunk at its thickest the branches
+                    // were still heavy near their ends (Don, 2026-10-03).
   thin:    0.035,   // half-width of a branch that carries nothing, in steps:
                     // every tip and every twig, whatever the dial below says
   stem:    0.12,    // thickness of the branch drawn between a node and its
@@ -1905,11 +1907,21 @@ const NREACH=new Float32Array(PMAX);
    every movement step with NDESC. NREACH is only ever raised, at a birth, and
    so remembers limbs long gone; this is what the branch is drawn from. */
 const NRD=new Float32Array(PMAX);
-/* how much of the root's thickness a point has, by how far along it is from
-   the tip (0) to the root (1): (e^kx - 1)/(e^k - 1), tabled */
-const TAPERK = Math.max(0, PARAMS.taperk);
+/* ---- what a branch's thickness is read from ----
+   How many nodes are in its subtree, as a share of its plant's, and nothing
+   else: not how old it is, not how near the root, not how far it reaches
+   (Don, 2026-10-03). Reach was tried and so was starting a branch at its
+   parent's width, and between them a short branch off the base of a great
+   plant began as thick as the trunk and was a twig one segment later. A tree
+   may have a little branch on its trunk, and it is thin for all its length.
+   NHV is the size of a node's HEAVIEST child's subtree, which is what its own
+   branch tapers down to; NNT is the size of the whole tree it hangs in. Both
+   are counted by the movement step with NDESC. The share is raised to
+   taperp, tabled. */
+const NHV=new Int32Array(PMAX), NNT=new Float32Array(PMAX);
+const TAPERP = Math.max(0.05, PARAMS.taperp);
 const ETAB = new Float32Array(1026);
-for(let n=0;n<=1025;n++){ const x=Math.min(1,n/1024); ETAB[n] = TAPERK>1e-3 ? (Math.exp(TAPERK*x)-1)/(Math.exp(TAPERK)-1) : x; }
+for(let n=0;n<=1025;n++) ETAB[n] = Math.pow(Math.min(1,n/1024), TAPERP);
 /* ---- the length a plant's thickness is measured against ----
    NRT is the reach of the top of the tree a node hangs in, handed to every
    node of it by the movement step, which walks each tree from its real top.
@@ -1941,17 +1953,21 @@ const NCWS = new Float32Array(PMAX), NRST = new Int32Array(PMAX);
    it, so a joint stays whole while both move. */
 const WIDTHEASE = 27;
 const NWS1 = new Float32Array(PMAX), NWS2 = new Float32Array(PMAX), NWST = new Int32Array(PMAX);
-function widthWanted(j, reach){
+/* for a subtree of n nodes: the thin minimum, and of the trunk's thickness
+   (set by how long the plant is) the share its size earns */
+function widthWanted(j, n){
   const R=Math.max(NRT[j], PARAMS.step), Rs=R/PARAMS.step;
-  return PARAMS.thin*PARAMS.step + PARAMS.stem*varyS(j)*STYLE.stem*PARAMS.step*0.7*TAPER*Math.sqrt(Rs*Math.sqrt(Rs))*taperF(reach/R);
+  return PARAMS.thin*PARAMS.step + PARAMS.stem*varyS(j)*STYLE.stem*PARAMS.step*0.7*TAPER*Math.sqrt(Rs*Math.sqrt(Rs))*taperF(n/Math.max(1,NNT[j]));
 }
 function widthShown(j){
   const dt=ptick-NWST[j];
   if(dt>0){
     NWST[j]=ptick;
     const k = dt>=100000 ? 1 : 1-Math.exp(-dt/WIDTHEASE);
-    NWS2[j] += (widthWanted(j, NRD[j])-NWS2[j])*k;
-    NWS1[j] += (widthWanted(j, NRD[j]+NSTEP[j])-NWS1[j])*k;
+    /* its end is its heaviest child's start, so the main line runs on
+       unbroken and every segment tapers along itself; its start is its own */
+    NWS2[j] += (widthWanted(j, NHV[j])-NWS2[j])*k;
+    NWS1[j] += (widthWanted(j, NDESC[j]+1)-NWS1[j])*k;
   }
 }
 function contShown(i, c){
@@ -3850,8 +3866,13 @@ function emitNode(i, pass, w){
          at the base: a thick trunk and delicate branches. Sized by the
          world's step and not the node's, or two segments of different
          lengths met at different widths. */
+      /* (Both of those are superseded: see NHV. A branch starts at the width
+         its own subtree earns. Only the heaviest child, whose start IS its
+         parent's end, is tied to the parent's drawn end, so that joint stays
+         whole while both ease; any other child is its own width from its
+         first segment.) */
       widthShown(i); widthShown(par);
-      const cw=contShown(i, contOf(par)===i ? 1 : 0);
+      const cw=contShown(i, (NHV[par]>0 && NDESC[i]+1>=NHV[par]) ? 1 : 0);
       const w2=NWS2[i];
       const w1=NWS1[i]+(NWS2[par]-NWS1[i])*cw;
       const s=i*8;
@@ -4321,6 +4342,8 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
      across the arena to where the stranger's parent had been. */
   NSTEMA[i]=0;
   NRT[i] = par>=0 ? NRT[par] : 0;          /* its tree's length, until the next movement step says */
+  NNT[i] = par>=0 ? NNT[par] : 1; NHV[i]=0;
+  if(par>=0 && NHV[par]<1) NHV[par]=1;     /* and its parent has a child to taper to */
   if(par>=0){
     const a0=NTWA[par], a1=a0+NLFY[i], b=Math.floor(a1);
     NTWA[i]=a1; NTWS[i] = b>Math.floor(a0) ? ((b&1) ? 1 : -1) : 0;
@@ -5513,7 +5536,7 @@ function* movePlants(){
     /* a root does not turn: it is the one joint with nothing to lean
        against, and a fixed root on a swivel is a bearing */
     let sn=0, vn=0;
-    NDESC[r]=0; NV[r]=0; NRD[r]=0;
+    NDESC[r]=0; NV[r]=0; NRD[r]=0; NHV[r]=0;
     for(let k=COFF[r];k<COFF[r+1];k++) MSTK[sn++]=CHILD[k];
     while(sn>0){
       const c=MSTK[--sn], par=NPAR[c];
@@ -5522,7 +5545,7 @@ function* movePlants(){
          on without it: a limb retracting in mid-air, joined to nothing (Don,
          2026-09-19). It rides its plant now like any other node; setTurn is
          what keeps it from swinging on its own account. */
-      VIS[vn++]=c; NDESC[c]=0; NRD[c]=0;
+      VIS[vn++]=c; NDESC[c]=0; NRD[c]=0; NHV[c]=0;
       NW[c] += (NWT[c]-NW[c])*wk;
       if(NW[c]!==0){
         /* advance the phase; the lean follows a sine of it, so the joint
@@ -5549,13 +5572,14 @@ function* movePlants(){
     /* the load each joint carries: children were visited after their
        parents, so walking the visit order backwards sums the subtree */
     const seen=vn;
-    while(vn>0){ const c=VIS[--vn], p=NPAR[c]; NDESC[p] += NDESC[c]+1; const far=NRD[c]+NSTEP[c]; if(far>NRD[p]) NRD[p]=far; }
+    while(vn>0){ const c=VIS[--vn], p=NPAR[c], m=NDESC[c]+1; NDESC[p] += m; if(m>NHV[p]) NHV[p]=m; const far=NRD[c]+NSTEP[c]; if(far>NRD[p]) NRD[p]=far; }
     /* and the tree's own length, eased, to every node of it: see NRT */
     /* growing, it follows at once: growth is a step at a time and needs no
        easing, and a length that lagged behind a growing plant was shorter
        than the plant. Only a loss is eased. */
     { let cur=NRT[r]; if(!(cur>0) || NRD[r]>cur) cur=NRD[r]; else cur += (NRD[r]-cur)*rk; NRT[r]=cur;
-      for(let k=0;k<seen;k++) NRT[VIS[k]]=cur; }
+      const all=Math.max(1,NDESC[r]); NNT[r]=all;
+      for(let k=0;k<seen;k++){ const c=VIS[k]; NRT[c]=cur; NNT[c]=all; } }
     /* between bodies and never inside one: a plant is drawn all moved or
        not at all, and its loads are whole */
     if(sliceOver()){ plantsDirty=true; yield; }
