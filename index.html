@@ -1423,6 +1423,8 @@ const PARAMS = {
                     // 190 ticks a second and the display at 60 frames, so a
                     // step every tick would be paid for three times over
                     // before anything drew it.
+  turnease: 24,     // ticks a joint's rate takes to reach what it is told: see
+                    // setTurn. 0 jumps, as it did until 2026-10-03
   look:    24,      // ticks between one re-read of a node's turn output and
                     // the next. The rate is held between reads.
   sense:   2.0,     // how far, in collision radii, a node can feel the nearest
@@ -1691,7 +1693,7 @@ let MOVED_AT = 0;
 function leafRoll(i){
   const amt=PARAMS.roll;
   if(!(amt>0)){ ROLL[0]=1; ROLL[1]=1; return; }
-  const since=Math.min(Math.max(0, ptick-MOVED_AT), Math.max(1, PARAMS.mstep|0));
+  const since=Math.min(Math.max(0, ptick-NMT[i]), Math.max(1, PARAMS.mstep|0));
   const c=Math.abs(Math.cos((NPH[i]+NW[i]*since)*0.5 + (Math.imul(i,2654435761)>>>0)*1.4629e-9));
   ROLL[0]=1-amt*(1-c); ROLL[1]=1-0.22*amt*(1-c);
 }
@@ -1755,13 +1757,13 @@ const NC0 = new Float32Array(PMAX*3);                                  // and co
 const DP = new Float32Array(2);
 function sproutOf(i){ const a=ptick-NBORN[i]; if(a>=SPROUT) return 1; const g=a<=0?0:a/SPROUT; return g*g*(3-2*g); }
 function drawPos(i){
-  let x=NX[i], y=NY[i];
+  let x=cX(i), y=cY(i);
   for(let j=i, n=0; n<6; n++){
     if(ptick-NBORN[j] >= SPROUT) break;
     const p=NPAR[j];
     if(p<0 || NLIVE[p]===0 || NGEN[p]!==NPGEN[j]) break;
     const lag=1-sproutOf(j);
-    x-=(NX[j]-NX[p])*lag; y-=(NY[j]-NY[p])*lag;
+    x-=(cX(j)-cX(p))*lag; y-=(cY(j)-cY(p))*lag;
     j=p;
   }
   DP[0]=x; DP[1]=y;
@@ -1890,6 +1892,35 @@ const NCX=new Float32Array(PMAX), NCY=new Float32Array(PMAX);
 /* how far each node moved on the last movement step, squared: its speed,
    which is what a collision is decided by */
 const NV=new Float32Array(PMAX);
+/* the rate a joint is TOLD, by setTurn; NW eases toward it each movement
+   step. Set outright, a joint's rate changed in one step at every look, and
+   every ancestor's at once when a limb below it died (a lighter load turns
+   faster), and since a joint's speed is rate x cos(phase) the whole limb
+   below it lurched: two to three percent of all movement was a jerk of a
+   tenth of a step or more, and many times that around a death (Don,
+   2026-10-03). */
+const NWT=new Float32Array(PMAX);
+/* and how far each node moved on the last movement step, as a vector, so a
+   ghost can carry on from it (see emitGhost) */
+const NVX=new Float32Array(PMAX), NVY=new Float32Array(PMAX);
+/* the tick each node was last moved, per node, because a sliced tick can be
+   drawn with some bodies moved this step and some not yet */
+const NMT=new Int32Array(PMAX);
+/* ---- drawn between movement steps ----
+   Nodes move every mstep ticks, so everything alive moved one step in four
+   and stood still for three: twenty jumps a second on a sixty-frame screen,
+   beside the dying parts, which withdraw every tick and glided past the
+   stepping plant they were leaving (Don, 2026-10-03). Between steps a node
+   is drawn carried on along its last move, a quarter of it a tick, which is
+   where the next step puts it: since joint rates ease (turnease) the next
+   move is the last one to within a few hundredths of a step. Drawing only;
+   no lag. */
+function carryF(i){
+  if(PARAMS.sway<=0) return 0;
+  const ms=Math.max(1,PARAMS.mstep|0), since=ptick-NMT[i];
+  return since<=0 ? 0 : (since>=ms ? 1 : since/ms);
+}
+const cX = i => NX[i]+NVX[i]*carryF(i), cY = i => NY[i]+NVY[i]*carryF(i);
 /* and which plant it belonged to then. A body that has folded through itself
    is allowed to, and when its wood rots and the fold becomes two plants,
    nothing has moved and the overlap is suddenly contact. */
@@ -3126,7 +3157,9 @@ let frontDraw=0, frontDrop=0, frontYoung=0, budOk=0, budNo=0;
    it could not cheaply recover from that. Slots 0 and 1 are the position
    itself here, there is no hidden half of a flat arena, and three floats a
    ghost go with them. */
-const GHOSTN = 24576, GH_F = 47;   /* 38..45: the twig, see twigOf; 46: its paint slot, see NPS */
+const GHOSTN = 24576, GH_F = 53;   /* 51: its anchor's heading at the death, 52: the last turn it was carried through */
+//   /* 47..50: its motion and its parent's at the death, see emitGhost */
+//   /* 38..45: the twig, see twigOf; 46: its paint slot, see NPS */
 const GC = new Float32Array(3);
 /* One instance, two meanings, because leaves and branches must go down in
    ONE draw to keep the per-plant paint order:
@@ -3322,6 +3355,7 @@ function nodePaint(i, out){
    is what the expiry test reads. Colour holds and only dims a little: the
    leaving is the motion now, and a fade on top of it was two things at once. */
 let SCANLIM=0, scanGhost=0; const scanNote=[];
+const GDRIFT = 6;
 const TWG = new Float32Array(7);
 function emitGhost(n, w){
   const g=n*GH_F, age=ptick-GHOST[g+6], T=GHOST[g+16];
@@ -3347,21 +3381,38 @@ function emitGhost(n, w){
      however far that has moved since the death, all of it by the same
      amount, so it rides along in one piece and stays joined at the wound.
      Held to where it died, it came away and withdrew into empty air. */
-  let ox=0, oy=0;
+  /* It rides RIGIDLY: turned about what it hangs from by however far that
+     has turned since the death, as well as carried with it. Carried only, a
+     limb that had been swinging round with its anchor stopped turning in the
+     frame it died and slid; the commonest jerk at a death was that change of
+     direction (2026-10-03). */
+  let px0=0, py0=0, px1=0, py1=0, rc=1, rs=0;
   if(GHOST[g+28]>=0){
     const p=GHOST[g+28]|0;
+    px0=GHOST[g+31]; py0=GHOST[g+32];
     if(NLIVE[p]!==0 && (NGEN[p]&1023)===GHOST[g+29]){
-      drawPos(p); ox=DP[0]-GHOST[g+31]; oy=DP[1]-GHOST[g+32];
-      GHOST[g+33]=ox; GHOST[g+34]=oy;
+      drawPos(p); px1=DP[0]; py1=DP[1];
+      let dr=NROT[p]-GHOST[g+51]; dr-=Math.round(dr/(2*Math.PI))*2*Math.PI;
+      GHOST[g+33]=px1; GHOST[g+34]=py1; GHOST[g+52]=dr;
     } else {
       /* what it hung from has gone too. It stays where it had been carried
          to: dropping the shift sent the whole limb back to where it was cut,
          away from the plant, to finish there alone */
-      ox=GHOST[g+33]; oy=GHOST[g+34];
+      px1=GHOST[g+33]; py1=GHOST[g+34];
     }
+    const dr=GHOST[g+52]; if(dr!==0){ rc=Math.cos(dr); rs=Math.sin(dr); }
   }
-  const ax=GHOST[g+17]+ox, ay=GHOST[g+18]+oy;
-  const bx=GHOST[g]+ox, by=GHOST[g+1]+oy;
+  /* a point recorded at the death, as it is now; and a direction */
+  const RX=(x,y)=>px1+(x-px0)*rc-(y-py0)*rs, RY=(x,y)=>py1+(x-px0)*rs+(y-py0)*rc;
+  const VX=(x,y)=>x*rc-y*rs, VY=(x,y)=>x*rs+y*rc;
+  /* What it was doing when it died it goes on doing, running down over
+     GDRIFT ticks: a swinging limb used to stop dead in the frame it died and
+     then slide, which was a jerk at every death and the commonest one there
+     was. Its parent end carries on likewise, so the branch stays joined. */
+  const dk = GDRIFT*(1-Math.exp(-age/GDRIFT));
+  const a0x=GHOST[g+17]+GHOST[g+49]*dk, a0y=GHOST[g+18]+GHOST[g+50]*dk;
+  const b0x=GHOST[g]+GHOST[g+47]*dk,   b0y=GHOST[g+1]+GHOST[g+48]*dk;
+  const ax=RX(a0x,a0y), ay=RY(a0x,a0y), bx=RX(b0x,b0y), by=RY(b0x,b0y);
   const gx = stemmed ? bx+(ax-bx)*e : bx;
   const gy = stemmed ? by+(ay-by)*e : by;
   /* the branch goes at the same moment and at the same rate: fading the node
@@ -3374,8 +3425,8 @@ function emitGhost(n, w){
     if(SCANLIM>0 && Math.hypot(gx-ax,gy-ay)>SCANLIM){ scanGhost++; if(scanNote.length<6) scanNote.push({e:+e.toFixed(2), t0:GHOST[g+27]|0, t1:GHOST[g+30]|0, T:T|0, age, anchored:GHOST[g+28]>=0, len:+Math.hypot(gx-ax,gy-ay).toFixed(3), len0:+Math.hypot(GHOST[g]-GHOST[g+17],GHOST[g+1]-GHOST[g+18]).toFixed(3)}); }
     IBUF[w+I_A]=ax;          IBUF[w+I_A+1]=ay;
     IBUF[w+I_B]=gx;          IBUF[w+I_B+1]=gy;
-    IBUF[w+I_C]=GHOST[g+19]*keep; IBUF[w+I_C+1]=GHOST[g+20]*keep;
-    IBUF[w+I_D]=GHOST[g+21]*keep; IBUF[w+I_D+1]=GHOST[g+22]*keep;
+    IBUF[w+I_C]=VX(GHOST[g+19],GHOST[g+20])*keep; IBUF[w+I_C+1]=VY(GHOST[g+19],GHOST[g+20])*keep;
+    IBUF[w+I_D]=VX(GHOST[g+21],GHOST[g+22])*keep; IBUF[w+I_D+1]=VY(GHOST[g+21],GHOST[g+22])*keep;
     IBUF[w+I_W]=GHOST[g+23]*th; IBUF[w+I_W+1]=GHOST[g+24]*th;
     IBUF[w+I_COL]=gr*d; IBUF[w+I_COL+1]=gg*d; IBUF[w+I_COL+2]=gb*d;
     IBUF[w+I_COL+3]=ga*GHOST[g+14];
@@ -3386,6 +3437,9 @@ function emitGhost(n, w){
   if(GHOST[g+38]>0){
     /* the twig, drawn in with the rest, and the leaf on the end of it */
     for(let k=0;k<7;k++) TWG[k]=GHOST[g+39+k];
+    { const a=TWG[0],b=TWG[1]; TWG[0]=VX(a,b); TWG[1]=VY(a,b); }
+    { const a=TWG[2],b=TWG[3]; TWG[2]=VX(a,b); TWG[3]=VY(a,b); }
+    { const a=TWG[4],b=TWG[5]; TWG[4]=VX(a,b); TWG[5]=VY(a,b); }
     const d=PARAMS.stemdark;
     v = writeTwig(v, gx, gy, TWG, keep, gr*d, gg*d, gb*d, ga);
     lx=gx+TWG[0]*keep; ly=gy+TWG[1]*keep;
@@ -3394,7 +3448,7 @@ function emitGhost(n, w){
   const gs=GHOST[g+26], gl_= gs===0 ? gw : gw*LEAFBIG*LEAFFIT[gs|0];
   IBUF[v+I_B]= gs===0 ? gw*GHOST[g+7] : gl_;  IBUF[v+I_B+1]=gl_*GHOST[g+35];   /* as it was rolled when it died */
   IBUF[v+I_C]=GHOST[g+8];     IBUF[v+I_C+1]=gs;
-  IBUF[v+I_D]=GHOST[g+36]; IBUF[v+I_D+1]=GHOST[g+37];      /* as it was last drawn pointing */
+  IBUF[v+I_D]=VX(GHOST[g+36],GHOST[g+37]); IBUF[v+I_D+1]=VY(GHOST[g+36],GHOST[g+37]);      /* as it was last drawn pointing */
   IBUF[v+I_W]=-1;             IBUF[v+I_W+1]=0;
   const lk=GHOST[g+25];
   IBUF[v+I_W+1]= lk>1e-3 ? PARAMS.stemdark/lk : 1;
@@ -3609,7 +3663,7 @@ function emitNode(i, pass, w){
       if(!wound && PARAMS.curve>0){
         if(rooted(par)){
           const gp=NPAR[par];
-          let ex=px-NX[gp], ey=py-NY[gp]; const el=Math.sqrt(ex*ex+ey*ey);
+          let ex=px-cX(gp), ey=py-cY(gp); const el=Math.sqrt(ex*ex+ey*ey);
           if(el>1e-9){
             ex/=el; ey/=el;
             /* NOT the plain bisector. A child that grows back along its parent,
@@ -3643,7 +3697,7 @@ function emitNode(i, pass, w){
           if(tl>1e-9){ const k=2*(t1x*ux+t1y*uy); mx=k*ux-t1x; my=k*uy-t1y; } }
         if(c<0){ t2x=mx; t2y=my; }
         if(c>=0){
-          let ox=NX[c]-cx, oy=NY[c]-cy; const ol=Math.sqrt(ox*ox+oy*oy);
+          let ox=cX(c)-cx, oy=cY(c)-cy; const ol=Math.sqrt(ox*ox+oy*oy);
           if(ol>1e-9){
             ox/=ol; oy/=ol;
             const d=ux*ox+uy*oy, wq=d>0?d:0;                /* as above */
@@ -4022,8 +4076,15 @@ function ghost(i){
     const oka = an>=0 && NLIVE[an]!==0 && (an!==NPAR[i] || NGEN[an]===NPGEN[i]);
     GHOST[g+27]=t0; GHOST[g+30]=t1; GHOST[g+16]=T;
     GHOST[g+28]= oka ? an : -1; GHOST[g+29]= oka ? (NGEN[an]&1023) : 0;
-    if(oka){ drawPos(an); GHOST[g+31]=DP[0]; GHOST[g+32]=DP[1]; } else { GHOST[g+31]=0; GHOST[g+32]=0; }
-    GHOST[g+33]=0; GHOST[g+34]=0;
+    if(oka){ drawPos(an); GHOST[g+31]=DP[0]; GHOST[g+32]=DP[1]; GHOST[g+51]=NROT[an]; } else { GHOST[g+31]=0; GHOST[g+32]=0; GHOST[g+51]=0; }
+    GHOST[g+33]=GHOST[g+31]; GHOST[g+34]=GHOST[g+32]; GHOST[g+52]=0;
+    /* how it and its parent were moving relative to what it hangs from, per
+       tick, so it eases to a stop rather than halting in the frame it died */
+    const ms=Math.max(1,PARAMS.mstep|0), avx = oka ? NVX[an] : 0, avy = oka ? NVY[an] : 0;
+    GHOST[g+47]=(NVX[i]-avx)/ms; GHOST[g+48]=(NVY[i]-avy)/ms;
+    const pp=NPAR[i];
+    if(pp>=0 && pp!==an && NGEN[pp]===NPGEN[i]){ GHOST[g+49]=(NVX[pp]-avx)/ms; GHOST[g+50]=(NVY[pp]-avy)/ms; }
+    else { GHOST[g+49]=0; GHOST[g+50]=0; }
   }
 }
 
@@ -4132,7 +4193,7 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
      right after this returns, beside NANG. The reach of every ancestor grows
      to include the new tip, walking up only as far as it still changes
      anything — a sibling branch already longer stops the walk. */
-  NLA[i]=0; NW[i]=0; NPH[i]=0; NREACH[i]=0; NDESC[i]=0; NCX[i]=NX[i]; NCY[i]=NY[i]; NCR[i]=PROOT[i];
+  NLA[i]=0; NW[i]=0; NWT[i]=0; NVX[i]=0; NVY[i]=0; NMT[i]=ptick; NPH[i]=0; NREACH[i]=0; NDESC[i]=0; NCX[i]=NX[i]; NCY[i]=NY[i]; NCR[i]=PROOT[i];
   if(par>=0){
     let c=i, a=par;
     for(;;){
@@ -4193,7 +4254,7 @@ function killNode(i){
        dead interior — which is exactly what a crust does. */
     CCOUNT[NCC[i]]--;              /* wood is structure, not a living neighbour */
     NLIVE[i]=2; NONF[i]=0; woodN++; towood(i); NWOODAT[i]=ptick;
-    NW[i]=0;                            /* wood has no muscle; it is carried */
+    NWT[i]=0;                           /* wood has no muscle; it is carried, and its last swing runs down */
     freeGround(NX[i],NY[i]);            /* and it stops holding ground, too */
     /* Wood is only ever released from the tips inward, while growth runs the
        other way, so it accumulates without limit and eventually crowds the
@@ -4480,7 +4541,7 @@ function doom(i, delay){
   if(DIEBACK>0) delay += (Math.imul(i,2654435761)>>>0)%48;
   const left = NLIFE[i]-(ptick-NBORN[i]);
   if(NDYING[i] && left<=delay) return;          /* already going sooner */
-  NDYING[i]=1; NKID[i]=NCAP[i]; NW[i]=0; NV[i]=0;
+  NDYING[i]=1; NKID[i]=NCAP[i]; NW[i]=0; NWT[i]=0; NV[i]=0;
   if(left>delay) NLIFE[i]=(ptick-NBORN[i])+delay;
 }
 /* The plant limit is about watching a FULL world, and it does not bind an
@@ -5029,9 +5090,9 @@ function wrapAngle(a){
    The load below it stiffens it, linearly to nothing at `freeze` standing
    descendants, and the lever below it caps it. A root does not turn. */
 function setTurn(i){
-  if(PARAMS.sway<=0 || NLIVE[i]!==1 || NDYING[i] || !rooted(i)){ NW[i]=0; return; }
+  if(PARAMS.sway<=0 || NLIVE[i]!==1 || NDYING[i] || !rooted(i)){ NWT[i]=0; return; }
   const free = 1 - NDESC[i]/Math.max(1,PARAMS.freeze);
-  if(free<=0){ NW[i]=0; return; }
+  if(free<=0){ NWT[i]=0; return; }
   let w = PARAMS.sway*Math.tanh(OUTV[O_TURN]*0.25)*free;
   /* the lean moves at most bend·rate, at the middle of the swing */
   const lever = (NSTEP[i] + NREACH[i])*Math.max(1e-3, PARAMS.bend);
@@ -5039,7 +5100,7 @@ function setTurn(i){
     const cap = PARAMS.vmax/lever;
     if(w>cap) w=cap; else if(w<-cap) w=-cap;
   }
-  NW[i]=w;
+  NWT[i]=w;
 }
 /* A slice of the nodes re-read their turn every tick, on a rolling cursor
    like the reaper's, so every node reads about once per `look` ticks. */
@@ -5162,6 +5223,7 @@ function* movePlants(){
   if(nodeHigh===0) return;
   MOVED_AT = ptick;
   const dt = Math.max(1, PARAMS.mstep|0), bend = Math.max(0, PARAMS.bend);
+  const wk = PARAMS.turnease>0 ? 1-Math.exp(-dt/PARAMS.turnease) : 1;
   /* child lists, so bodies can be walked downward: parents are not lower
      indices than their children once slots recycle */
   COFF.fill(0,0,nodeHigh+1);
@@ -5188,6 +5250,7 @@ function* movePlants(){
          2026-09-19). It rides its plant now like any other node; setTurn is
          what keeps it from swinging on its own account. */
       VIS[vn++]=c; NDESC[c]=0;
+      NW[c] += (NWT[c]-NW[c])*wk;
       if(NW[c]!==0){
         /* advance the phase; the lean follows a sine of it, so the joint
            slows into each extreme and comes back without being told */
@@ -5199,7 +5262,7 @@ function* movePlants(){
       const hx=Math.cos(rot), hy=Math.sin(rot);
       NHX[c]=hx; NHY[c]=hy;
       const x=NX[par]+hx*NSTEP[c], y=NY[par]+hy*NSTEP[c];
-      { const mx=x-NX[c], my=y-NY[c]; NV[c]=mx*mx+my*my; }
+      { const mx=x-NX[c], my=y-NY[c]; NV[c]=mx*mx+my*my; NVX[c]=mx; NVY[c]=my; NMT[c]=ptick; }
       NX[c]=x; NY[c]=y;
       NSU[c]=(x+NX[par])*0.5; NSV[c]=(y+NY[par])*0.5;
       const key=binOf(x,y);
