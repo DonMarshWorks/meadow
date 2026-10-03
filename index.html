@@ -934,13 +934,11 @@ const PARAMS = {
                     // ticks stay short. See sizeToMachine. 0 keeps the step
                     // named above whatever the machine; naming step in the
                     // address does the same, since that is a choice made.
-  prerun:  1200,    // ticks run before the first frame is shown. An empty
-                    // arena is not this piece — the first thing anybody would
-                    // see is forty dots, and the succession the whole thing is
-                    // about takes a while to start turning. Far enough that
-                    // plants have met each other and something has died. 0
-                    // opens on the seeding itself, which is what a harness
-                    // measuring the opening wants.
+  prerun:  0,       // ticks run before the first frame is shown. It was 1200,
+                    // so the piece opened on plants that had already met;
+                    // since 2026-10-03 it opens on the founders as single
+                    // nodes and the growth is the first thing seen (Don).
+                    // A number here skips that far in, out of sight.
 
   /* ---- the arena and its scale ----
      `step` is in arena units, where the world is 2*AX by 2 — so a step of
@@ -1354,6 +1352,13 @@ const PARAMS = {
                     // where it stands, carrying the leaf. Drawing only.
   leafshape: -1,    // 1..12 gives every plant that one leaf shape, to look at it;
                     // -1 is the real rule. See freshShape.
+  twig:    1,       // leaves along the branches as well as at the tips: each
+                    // plant draws a leafiness of 10% to 30% and every node at
+                    // that rate carries a leaf on a curved twig. See twigOf.
+  twiglen: 0.8,     // a twig's length, in steps. 0.45 was shorter than its leaf
+                    // and read as a stub
+  tipleaf: 1,       // 0 takes the leaf off every growing tip, so leafiness
+                    // alone says where the leaves are
   vary:    1,       // each lineage draws its own leaf opacity and branch
                     // thickness, as multipliers on the dials: see freshTone.
                     // 0 paints every plant alike. Paint only either way.
@@ -1673,6 +1678,11 @@ const TONE_L = 0.11, TONE_S0 = 0.55, TONE_S1 = 1.20;
    stream is untouched and every seed is the world it was before these
    existed. vary=0 paints every plant alike, and changes nothing else. */
 const NVO = new Float32Array(PMAX), NVS = new Float32Array(PMAX);
+/* and three for the twig leaves (Don, 2026-10-03): how leafy the plant is,
+   0.10 to 0.30 of its nodes; which way its twigs curl, +1 or -1, which is the
+   plant's own handwriting; and a phase, so two plants of one leafiness do not
+   leaf at the same depths */
+const NLFY = new Float32Array(PMAX), NTWC = new Int8Array(PMAX), NTPH = new Float32Array(PMAX);
 const _fb = new Float32Array(2), _ib = new Int32Array(_fb.buffer);
 function freshTone(i){
   NTL[i] = (prnd()*2-1)*TONE_L;
@@ -1684,6 +1694,12 @@ function freshTone(i){
   const u2 = (h>>>0)/4294967296;
   NVO[i] = 0.6 + 0.65*u1;
   NVS[i] = 0.5 + 1.1*u2;
+  h = Math.imul(h ^ 0x165667B1, 0x27D4EB2F); h ^= h>>>15;
+  NLFY[i] = 0.10 + 0.20*((h>>>0)/4294967296);
+  h = Math.imul(h ^ 0x61C88647, 0x85EBCA6B); h ^= h>>>13;
+  NTWC[i] = ((h>>>0)/4294967296) < 0.5 ? -1 : 1;
+  h = Math.imul(h ^ 0x7FEB352D, 0x846CA68B); h ^= h>>>16;
+  NTPH[i] = (h>>>0)/4294967296;
 }
 function varyO(i){ return PARAMS.vary>0 ? NVO[i] : 1; }
 function varyS(i){ return PARAMS.vary>0 ? NVS[i] : 1; }
@@ -2359,6 +2375,7 @@ function inherit(src,dst){
   NSHAPE[dst]=NSHAPE[src];
   NTL[dst]=NTL[src]; NTS[dst]=NTS[src];
   NVO[dst]=NVO[src]; NVS[dst]=NVS[src];
+  NLFY[dst]=NLFY[src]; NTWC[dst]=NTWC[src]; NTPH[dst]=NTPH[src];
 }
 function pointMutate(i){
   const r=prnd();
@@ -3078,7 +3095,7 @@ let frontDraw=0, frontDrop=0, frontYoung=0, budOk=0, budNo=0;
    it could not cheaply recover from that. Slots 0 and 1 are the position
    itself here, there is no hidden half of a flat arena, and three floats a
    ghost go with them. */
-const GHOSTN = 24576, GH_F = 38;
+const GHOSTN = 24576, GH_F = 46;   /* 38..45: the twig, see twigOf */
 const GC = new Float32Array(3);
 /* One instance, two meanings, because leaves and branches must go down in
    ONE draw to keep the per-plant paint order:
@@ -3131,7 +3148,7 @@ const widthOf = n => WTAB[n>4096?4096:n];
    buffer, bufferSubData was handed more than it could hold, and the entire
    draw failed — so the whole planet's vegetation blinked out for exactly one
    frame. Every loop below is bounded against it. */
-const MAXINST = PMAX*2 + GHOSTN*2;
+const MAXINST = PMAX*3 + GHOSTN*3;   /* branch, twig, leaf: a node is at most three */
 const IBUF = new Float32Array(MAXINST*INST);
 let instN = 0;
 
@@ -3258,6 +3275,7 @@ function nodePaint(i, out){
    is what the expiry test reads. Colour holds and only dims a little: the
    leaving is the motion now, and a fade on top of it was two things at once. */
 let SCANLIM=0, scanGhost=0; const scanNote=[];
+const TWG = new Float32Array(7);
 function emitGhost(n, w){
   const g=n*GH_F, age=ptick-GHOST[g+6], T=GHOST[g+16];
   if(!(age>=0 && age<T) || GHOST[g+2]<=0) return w;
@@ -3317,8 +3335,15 @@ function emitGhost(n, w){
     w+=INST;
   }
   /* its leaf, which with layers on belongs to the other half of the buffer */
-  const v = SB.layered ? SB.wl : w;
-  IBUF[v+I_A]=gx;             IBUF[v+I_A+1]=gy;
+  let v = SB.layered ? SB.wl : w, lx=gx, ly=gy;
+  if(GHOST[g+38]>0){
+    /* the twig, drawn in with the rest, and the leaf on the end of it */
+    for(let k=0;k<7;k++) TWG[k]=GHOST[g+39+k];
+    const d=PARAMS.stemdark;
+    v = writeTwig(v, gx, gy, TWG, keep, gr*d, gg*d, gb*d, ga);
+    lx=gx+TWG[0]*keep; ly=gy+TWG[1]*keep;
+  }
+  IBUF[v+I_A]=lx;             IBUF[v+I_A+1]=ly;
   const gs=GHOST[g+26], gl_= gs===0 ? gw : gw*LEAFBIG*LEAFFIT[gs|0];
   IBUF[v+I_B]= gs===0 ? gw*GHOST[g+7] : gl_;  IBUF[v+I_B+1]=gl_*GHOST[g+35];   /* as it was rolled when it died */
   IBUF[v+I_C]=GHOST[g+8];     IBUF[v+I_C+1]=gs;
@@ -3329,7 +3354,7 @@ function emitGhost(n, w){
   IBUF[v+I_COL]=gr*lk; IBUF[v+I_COL+1]=gg*lk; IBUF[v+I_COL+2]=gb*lk;
   IBUF[v+I_COL+3]=ga;
   if(SB.layered){ SB.wl=v+INST; return w; }
-  return w+INST;
+  return v+INST;
 }
 
 /* The dead, bucketed by the lineage they belonged to and in the same ascending
@@ -3356,6 +3381,78 @@ function orderGhosts(){
 }
 
 /* one node of a plant: pass 0 lays its branch, pass 1 its foliage */
+/* ---- leaves along the branch, on twigs ----
+   Which nodes: evenly, by depth below the plant's root, at the plant's
+   leafiness. A node carries one where the running count of (depth x
+   leafiness) ticks over, so the leaves fall every three to ten nodes along a
+   branch and never at random, and consecutive ones alternate sides. Only a
+   node with a child: a tip has its own leaf already, and when a tip buds its
+   leaf goes on with the new tip (see NLW0) while the twig grows in from
+   nothing over LEAFT ticks. The twig leaves the branch at 55 degrees to it
+   and curls by 35 one way or the other, the same way for the whole plant.
+   The leaf ages with its node as a tip leaf does, closing in the last fifth
+   of the node's life. Paint only. TW holds the result as offsets from where
+   the node is drawn, so a ghost can carry it away. */
+const TW = new Float32Array(12);
+const TWIG_C = Math.cos(55*Math.PI/180), TWIG_S = Math.sin(55*Math.PI/180);
+const TBEND_C = Math.cos(35*Math.PI/180), TBEND_S = Math.sin(35*Math.PI/180);
+function twigLeafy(i){
+  const p=NLFY[i], d=NDEP[i], ph=NTPH[i];
+  const b=Math.floor((d+1)*p+ph);
+  return b>Math.floor(d*p+ph) ? ((b&1) ? 1 : -1) : 0;
+}
+function twigOf(i){
+  if(PARAMS.twig<=0 || NLIVE[i]!==1 || NLK[i]===0 || NDYING[i]) return false;
+  const side=twigLeafy(i); if(side===0) return false;
+  /* how far the twig has grown: from the birth of the child that took this
+     node's tip leaf */
+  const c=contOf(i); let open=1;
+  if(c>=0){ const t=(ptick-NBORN[c])/LEAFT; open = t<=0 ? 0 : (t>=1 ? 1 : t*t*(3-2*t)); }
+  if(open<=0) return false;
+  const a=(ptick-NBORN[i])/Math.max(1,NLIFE[i]);
+  if(a>=LEAF_GONE) return false;
+  let size = a<LEAF_FULL ? a/LEAF_FULL : 1, dark=1, close=1;
+  if(a>=LEAF_FULL){ const q=(a-LEAF_FULL)/(LEAF_GONE-LEAF_FULL); dark=1-0.45*q; close=1-q*q*(3-2*q); }
+  /* along the branch as it is drawn arriving here, else the node's heading */
+  let ux=NHX[i], uy=NHY[i];
+  if(NSTEMA[i]>0){ const k=i*8, hx=NSG[k+4], hy=NSG[k+5], hl=Math.sqrt(hx*hx+hy*hy); if(hl>1e-9){ ux=hx/hl; uy=hy/hl; } }
+  const ss=side*TWIG_S, tx=ux*TWIG_C-uy*ss, ty=ux*ss+uy*TWIG_C;
+  const L=PARAMS.twiglen*NSTEP[i]*open, cb=NTWC[i]*TBEND_S;
+  const t1x=(tx*TBEND_C+ty*cb)*L, t1y=(-tx*cb+ty*TBEND_C)*L;
+  const t2x=(tx*TBEND_C-ty*cb)*L, t2y=(tx*cb+ty*TBEND_C)*L;
+  TW[0]=tx*L; TW[1]=ty*L; TW[2]=t1x; TW[3]=t1y; TW[4]=t2x; TW[5]=t2y;
+  TW[6]=PARAMS.stem*varyS(i)*STYLE.stem*NSTEP[i]*0.7*0.8;
+  TW[7]=leafW(size)*NSTEP[i]*NLSC[i]*open*close*SEASON.leaf;
+  TW[8]=dark;
+  const tl=Math.sqrt(t2x*t2x+t2y*t2y)||1; TW[9]=t2x/tl; TW[10]=t2y/tl;
+  return TW[7]>0;
+}
+/* a leaf instance, wherever it hangs */
+function writeLeaf(w, x, y, i, wid, leafK, dx, dy, r, g, b, al){
+  const shp=NSHAPE[i], lw = shp===0 ? wid : wid*LEAFBIG*LEAFFIT[shp];
+  leafRoll(i); leafK*=ROLL[1];
+  IBUF[w+I_A]=x;  IBUF[w+I_A+1]=y;
+  IBUF[w+I_B]=lw; IBUF[w+I_B+1]=lw*ROLL[0];
+  IBUF[w+I_C]=NROT[i]; IBUF[w+I_C+1]=shp;
+  IBUF[w+I_D]=dx; IBUF[w+I_D+1]=dy;
+  IBUF[w+I_W]=-1; IBUF[w+I_W+1]= leafK>1e-3 ? PARAMS.stemdark/leafK : 1;
+  IBUF[w+I_COL  ]=Math.min(255,r)*leafK/255;
+  IBUF[w+I_COL+1]=Math.min(255,g)*leafK/255;
+  IBUF[w+I_COL+2]=Math.min(255,b)*leafK/255;
+  IBUF[w+I_COL+3]=al;
+  return w+INST;
+}
+/* a twig: a ribbon from (x,y) by the offsets in T, scaled by k */
+function writeTwig(w, x, y, T, k, r, g, b, al){
+  IBUF[w+I_A]=x; IBUF[w+I_A+1]=y;
+  IBUF[w+I_B]=x+T[0]*k; IBUF[w+I_B+1]=y+T[1]*k;
+  IBUF[w+I_C]=T[2]*k; IBUF[w+I_C+1]=T[3]*k;
+  IBUF[w+I_D]=T[4]*k; IBUF[w+I_D+1]=T[5]*k;
+  IBUF[w+I_W]=T[6]; IBUF[w+I_W+1]=T[6]*0.55;
+  IBUF[w+I_COL]=r; IBUF[w+I_COL+1]=g; IBUF[w+I_COL+2]=b;
+  IBUF[w+I_COL+3]=al;
+  return w+INST;
+}
 function emitNode(i, pass, w){
   if(NLIVE[i]===0) return w;
     /* Everything geometric about this node was settled when it was born; see
@@ -3507,7 +3604,12 @@ function emitNode(i, pass, w){
 
     else if(pass===0) NSTEMA[i]=0;
 
-    if(pass===0 || !(leafOn || carried)) return w;
+    if(pass===1 && twigOf(i)){
+      drawPos(i); const x=DP[0], y=DP[1], d=PARAMS.stemdark;
+      w = writeTwig(w, x, y, TW, 1, Math.min(255,r*d)/255, Math.min(255,g*d)/255, Math.min(255,b*d)/255, al);
+      w = writeLeaf(w, x+TW[0], y+TW[1], i, TW[7], TW[8], TW[9], TW[10], r, g, b, al);
+    }
+    if(pass===0 || !(leafOn || carried) || PARAMS.tipleaf<=0) return w;
     drawPos(i);
     IBUF[w+I_A]=DP[0];   IBUF[w+I_A+1]=DP[1];
     /* a shaped leaf carries its own proportions, and covers less of its
@@ -3758,6 +3860,17 @@ function ghost(i){
   leafRoll(i); GHOST[g+35]=ROLL[0]; GHOST[g+25]*=ROLL[1];
   { const dl=NLDX[i]*NLDX[i]+NLDY[i]*NLDY[i];
     GHOST[g+36]= dl>0.5 ? NLDX[i] : NHX[i]; GHOST[g+37]= dl>0.5 ? NLDY[i] : NHY[i]; }
+  /* A node with a twig leaf goes with it: the twig and its leaf are what was
+     on screen, and the leaf withdraws along the twig as the node withdraws
+     along its branch. Otherwise a culled plant dropped every twig leaf in the
+     frame it died. */
+  if(twigOf(i)){
+    GHOST[g+38]=1;
+    for(let k=0;k<7;k++) GHOST[g+39+k]=TW[k];
+    GHOST[g+2]=Math.max(1e-7, TW[7]); GHOST[g+25]=TW[8];
+    leafRoll(i); GHOST[g+35]=ROLL[0]; GHOST[g+25]*=ROLL[1];
+    GHOST[g+36]=TW[9]; GHOST[g+37]=TW[10];
+  } else GHOST[g+38]=0;
   GHOST[g+8]=NROT[i];
   /* The branch goes with it: fading the node while its branch had already
      vanished left a plant dissolving in two stages.
@@ -6054,6 +6167,31 @@ function hLast(k){
    It is decided by reloading, because the step sizes every bin and grid at
    load. Whoever names step in the address has decided already. */
 const AUTO_TICKS = 150, AUTO_REF = 55, AUTO_OK = 2.5;
+/* The probe was the first 150 ticks of the world itself, which meant the
+   world opened 150 ticks in. Now that it opens at its very beginning the
+   probe is a fixed piece of arithmetic that touches nothing (machineBench),
+   timed against what it costs on the desktop the sizing was fitted on and
+   scaled to read as the old probe did, so AUTO_REF and AUTO_OK keep their
+   meaning. The best of three, so a stray pause cannot make a fast machine
+   look slow. */
+const BENCH_REF = 8.7;   /* ms, best of three, on that desktop, 2026-10-03 */
+function machineBench(){
+  const n=4096, a=new Float32Array(n), b=new Float32Array(n);
+  let best=Infinity, sink=0;
+  for(let run=0; run<3; run++){
+    const t0=performance.now();
+    for(let r=0;r<60;r++){
+      for(let i=0;i<n;i++){
+        const x=a[i]+i*0.0007+r*0.01, y=Math.sin(x)*Math.cos(b[i]+x*0.5);
+        a[i]=y; b[i]=(b[i]+y*y)%3;
+        if(y>0) sink++;
+      }
+    }
+    best=Math.min(best, performance.now()-t0);
+  }
+  if(sink<0) console.log(sink);
+  return best;
+}
 let sized = {probeMs:0, factor:0, step:0};
 function sizeToMachine(ms){
   const f = ms/AUTO_REF;
@@ -6072,10 +6210,8 @@ function seedWorld(){
   tickGen=null;                 /* a tick of the world before this one */
   ptick=0;
   plantsSeed();
-  const probe=Math.min(PARAMS.prerun|0, AUTO_TICKS);
-  for(let i=0;i<probe;i++) plantsStep();
-  if(sizeToMachine(performance.now()-t0)) return;
-  for(let i=probe;i<PARAMS.prerun;i++) plantsStep();
+  if(sizeToMachine(machineBench()/BENCH_REF*AUTO_REF)) return;
+  for(let i=0;i<PARAMS.prerun;i++) plantsStep();
   pruneFragments();
   buildMs = performance.now()-t0;
 }
