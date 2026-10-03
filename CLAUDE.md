@@ -55,6 +55,10 @@ schedules the loop with its own rAF call, and that is the call being dropped.
   `npx playwright install chromium`. It renders in software so results are
   deterministic on any machine, which makes it slow — several minutes.
   `npm run verify -- --static` runs only the instant checks.
+- **Patch `index.html` with a small node script written to a file by the Write
+  tool**, anchored on exact text and refusing unless each anchor is found
+  exactly once. Shell heredocs and `node -e` with nested quotes have failed
+  here repeatedly, and twice left a patch script that did not parse.
 - `node tools/sweep.js envcap=1,2,3,4,5` searches a parameter rather than
   looking at one. It stops the frame loop, checks that two runs of one seed are
   byte-identical before comparing anything, and refuses to average a dead world
@@ -63,6 +67,12 @@ schedules the loop with its own rAF call, and that is the call being dropped.
   `npm run verify` must be green on the exact `index.html` being pushed — check
   the blob hash matches rather than assuming, since the run takes minutes and it
   is easy to edit the file while it runs.
+
+  A run counts only if its hash before, its hash after and the file on disk
+  are all the same, and only by verify's OWN exit code and its "everything
+  passed" line. A wrapper that ends in `echo` exits 0 whatever verify did, and
+  once hid a crash on a busy port. Two runs cannot share port 8123: queue the
+  second behind the first.
 
   Do not put "now running verify" in the last sentence of a message. On the
   project this descends from, twice the sentence stood in for the action and the
@@ -178,10 +188,24 @@ the bearing to the nearest node of another plant, and `foed`, how near it is.
 Wood does not turn but is carried. Nodes may be carried past the edge; a node
 outside, or a child that would land outside, cannot bud.
 
+**Motion is continuous to the eye (2026-10-03).** Three things, found by
+measuring the change between consecutive one-tick moves of every instance.
+A joint's rate is a TARGET (`NWT`, set by `setTurn`) that `NW` eases toward over
+`turnease` ticks: set outright it changed at every look, and every ancestor's
+changed at once when a limb below died, since a lighter load turns faster.
+This one is simulation, and the gates were re-run. Between movement steps a
+node is DRAWN carried on along its last move (`carryF`, `NVX`/`NVY`, the
+per-node clock `NMT`), a quarter of it a tick, which is where the next step
+puts it; nodes had moved one tick in four and stood still for three, twenty
+jumps a second. Drawing only, no lag, and only accurate because the rates
+ease. Leaf roll reads the same carried phase. Living motion's 99th-percentile
+one-tick jerk went from 0.42 of a step to 0.04.
+
 Consequences to keep in mind: the instance buffer is dirty on every movement
 step, so the sliced rebuild is effectively continuous; `instHash` still says
 a sliced build equals a whole one but no longer says the picture is unchanged
-between ticks; `overlapScan` counts only pairs from *different* plants; and
+between ticks; `overlapScan` counts only pairs from *different* plants, and
+sets apart any pair with a dying node (`dyingPairs`), which is not a violation; and
 `wallScan` asserts only that roots are inside.
 
 **Heartwood.** A node that dies still holding children stops growing, stops
@@ -276,29 +300,43 @@ loser — that was proposed and declined, because it feeds the one-family
 takeover. Before this, winning paid nothing. `plants().spoils` reports kills,
 life given and node speeds.
 
-**Dying back.** What is dying is carried by its plant but does not turn
-(`setTurn`); it was frozen in place once, and a retracting limb came away from
-the plant and withdrew into empty air. A ghost likewise follows its parent
-while the parent stands (`g+28`, `g+29`): its curve is shifted by the parent's
-movement since the death and it retracts toward the parent as it is now. A plant the limit or the size bar removes is killed
-whole and dims as one over `agefade`; only a cut unwinds. A limb cut at its
-base is marked (`NDYING`) and each
-node's remaining life set by its distance from the farthest tip, so it withers
-from the tips toward the wound over at most 300 ticks. Dying nodes cannot bud
-and do not count toward `PSIZE`, so a dying body is already nobody to the
-limit. Before this a single cut once freed 4,871 nodes at a stroke and big
-plants winked out inside the quarter-second fade. `deathLog()` says what took
-what. Dying is growing run backwards, in ONE smooth motion. A cut limb dies at once
-(it no longer lingers, colliding, while it dies back) and a cleared plant dies
-whole; either way the dead part is ghosts, and `scheduleRewind` gives each a
-window measured along the branches: H is the distance out to the farthest tip,
-a node's segment runs from t1·H/(H+len) to t1, and its children's t1 is its
-start. So every tip starts at zero, every branch arrives as its fork begins to
-move, and a tip travels at constant speed through the nodes. Progress in a
-window is LINEAR and the ease is on the whole clock (`emitGhost`); easing each
-segment, and scheduling by depth, is what made the old one step. The dying
-part rides whatever living thing it hangs from (`NTAN`, ghost slots 28-32), all
-of it shifted by the same amount. `retspeed`, `retcut`, `retall`, `retage`.
+**Dying is withdrawing, and it goes on moving (2026-10-03, Don's design).**
+What is going — a plant cleared whole, a limb cut, the part beyond rotting
+wood — is not removed and replayed. It STAYS in the plant, marked `NDYING`:
+still read, still swayed by the same joints, so it moves exactly as it did.
+It buds no more, does not count toward `PSIZE` (so its seat is free at once),
+neither cuts nor is cut, and holds its ground until it has withdrawn from it.
+`scheduleRewind` gives each node a window measured along the branches: H is
+the distance out to the farthest tip, a node's segment runs from t1·H/(H+len)
+to t1, and its children's t1 is its start, so every tip starts at zero, every
+branch arrives as its fork begins to move, and a tip travels at constant speed
+through the nodes. Progress in a window is LINEAR and the ease is on the whole
+clock; easing each segment, and scheduling by depth, is what made an older one
+step. `markDying` marks what was scheduled; `dyingE` is how far a node has
+withdrawn; `drawPos` pulls it that far toward where its parent is drawn NOW;
+`emitNode` scales its leaf, twig and tangents by what is left and dims it; and
+`releaseDying` frees it at `NDIEAT`, tips first, when nothing of it is on
+screen. Only a node that was a tip when it began keeps a leaf (`NDTIP`), or a
+branch would sprout leaves as its children withdrew into it. Durations:
+`retspeed` ticks per step of branch, a floor of 180, and the caps `retcut`,
+`retall`, `retage` — all tripled on 2026-10-03 because it felt frantic.
+
+Ghosts remain only for a node that dies alone, of age. They were the whole
+mechanism until then, and every way a frozen record failed to move like the
+living thing was a jerk at the death: it stopped swinging, it did not turn
+with its anchor, and a whole plant, which hangs from nothing, stopped dead
+before it withdrew. A ghost now rides its anchor rigidly (turned as well as
+carried) and its last motion runs down over `GDRIFT` ticks, and it is merged
+into the paint order where its node stood.
+
+Three things this design broke, each found by an audit in the live page and
+each worth knowing the shape of. The sweep frees heartwood of a body with
+nothing living and nothing dying, and `BDYING` counts only the LIVING that are
+dying, so a dying plant's trunk was freed whole mid-withdrawal: wood that is
+itself `NDYING` is now exempt. A dying node's life was lengthened to see it
+through, and since leaf size is age over life that made every node younger and
+reopened closed leaves: `reap` simply passes over the dying instead. And
+`overlapScan` counted the dying against the exclusion invariant.
 
 **Rendering** is instanced quads straight to the default framebuffer through an
 orthographic transform, with the letterbox done by `gl.viewport` and a scissored
@@ -306,7 +344,7 @@ clear. There is no sheet texture, no mipmap, no seam passes and no detail patch
 — the sphere needed all four to fold plants into a planet's albedo and to make
 zooming mean anything, and a flat arena entirely on screen needs none of them.
 
-**Branches are curves, since 2026-09-18.** One instance layout (`INST` = 14
+**Branches are curves, since 2026-09-18.** One instance layout (`INST` = 15
 floats) serves leaves and branches, because both must go down in one draw to
 keep the per-plant paint order; `W.x < 0` marks a leaf. A branch is a ribbon on
 a cubic Hermite from parent to child, evaluated in the vertex shader over an
@@ -320,11 +358,49 @@ has no child, mirrors its start direction across the chord, so its last
 segment is a circular arc carrying the bend on; its leaf lies along that end
 direction, passed as a unit vector in `D`, so leaves cost no trigonometry.
 `NCONT` names the child that continues a branch, so a run of nodes is one
-smooth line and side branches peel off it. Half-width follows load
-(`taper`, via `NDESC`). What was last painted is kept per node (`NSG`) and a
+smooth line and side branches peel off it. Half-width is its own subject,
+below. What was last painted is kept per node (`NSG`) and a
 ghost copies it, for the reason `NSTEMA` exists. Ribbons thinner than a pixel
 are drawn a pixel wide and fainter (`uPx`). Measured: rebuild 0.78 → 1.03 ms at
 22,270 instances, same instance count. `curve=0` restores straight branches.
+
+**A branch is as thick as its subtree is large, and nothing else (Don,
+2026-10-03).** Not how old it is, not how near the root, not how far it
+reaches. Half-width is a fixed minimum (`thin`, which every tip and twig is)
+plus the trunk's thickness times the subtree's share of the plant's nodes
+raised to `taperp` (2.0, set by eye after 0.6, 0.8 and 1.0). A branch STARTS
+at the width its own subtree earns and ENDS at its heaviest child's start
+(`NHV`), so the main line tapers unbroken along every segment and a fork steps
+down, as a tree's does. `NNT` is the size of the whole tree and `NRT` its
+length, which sets the trunk; the movement step counts all three with `NDESC`
+and hands the plant's figures to every node, because it walks each tree from
+its real top. The `stem` dial (maximum 0.9) therefore thickens the base and
+leaves the ends alone.
+The width DRAWN eases toward the width wanted over `WIDTHEASE` ticks, about
+twenty frames (`widthShown`): the wanted width changes in steps, a bud adding
+a node to everything below it. The heaviest child starts at its parent's
+drawn end, not a copy eased apart from it, so that joint stays whole.
+Three earlier rules, and what each did wrong. Load raised to 0.4 times the
+dial scaled tip and trunk alike. Distance to the farthest tip made a thin
+branch off a trunk's base start as thick as the trunk. And a branch that
+"continued" its parent started at its parent's width, so when the continuing
+child was a short one it went from trunk to twig in a segment: 49 to 66 such
+at any moment, the worst 24 to 1.
+
+**A branch runs from its parent's color to its own** (`I_C0`, the fifteenth
+float: the parent's branch color packed as three bytes plus one), so there is
+no step of color at a joint. The paint is kept per node for the length of one
+build (`paintCached`, `BUILD`), since a parent may be painted before or after
+its child. For a LEAF the same slot is how wide its stalk is, as a share of the
+leaf, so a stalk is the width of the branch it sits on.
+
+**Ends are round where they need to be.** The strip has a row before its start
+and one after its end, pushed out by the half-width into a half-disc when the
+sign of `I_C0` (start) or of `W.y` (end) says so, and folded flat otherwise. A
+tip's end is round, a side branch's start is, and so is any joint where a
+branch sets off in a different direction from the one its parent arrived in,
+which closes the wedge two square ends leave open. A straight joint is left
+flush: two caps over each other show as a bead on a translucent branch.
 
 **The canvas is not multisampled, since 2026-09-20** (`aa=1` restores it). It
 was most of the cost of drawing: 35 fps with it and 120 without on an
@@ -377,6 +453,19 @@ drew 14 frames a second with its GPU idle. The rebuild's slice is capped at
 and on that stick that was three times a second at the default world size.
 What the eye sees is the rebuild rate; report it beside the frame rate.
 
+**The world waits while a picture is half built (2026-10-03).** A rebuild
+spread over several frames used to read the world at several ticks: a node
+that died between two slices was drawn neither alive nor dying, and a budding
+tip's leaf went to a child the build did not know of. With the CPU throttled
+four times, 21,939 leaves were missing from 285 pictures in 40 seconds, the
+worst 440 in one: a sparkle over the whole screen whenever the frame rate fell
+under 50, which is when slicing starts. Now no tick runs while `SB.busy`, and
+the two take turns: the rebuild earns `sheetSlice` of credit a frame and
+begins when it has earned what the last one cost (`sheetCredit`), and a frame
+gives its whole budget to one or the other. Same work a frame, same ticks a
+second, nothing missing. `instHash` never saw this, because it never ran a
+tick between slices.
+
 **The resolution governor times the GPU.** Every two seconds one frame reads
 back a pixel, which cannot return until the frame is drawn, and the backlog
 in FRAMES decides. Two indirect tests failed first: the frame rate alone cut a
@@ -385,8 +474,14 @@ accounted for by our work" read a 20ms frame shown at a 33ms refresh as 40%
 waiting for pixels. `gl.finish()` returns at once in Chrome and measures
 nothing.
 
-**A slow machine grows a bigger-plant world** (`auto`, `sizeToMachine`). The
-first 150 ticks after seeding are timed against this desktop (`AUTO_REF`); a
+**The world opens at its beginning** (`prerun` 0, since 2026-10-03): the first
+thing seen is the founders as single nodes, growing. It used to run 1,200
+ticks out of sight first.
+
+**A slow machine grows a bigger-plant world** (`auto`, `sizeToMachine`). A
+fixed piece of arithmetic that touches nothing (`machineBench`, 8.7ms on this
+desktop, best of three) is timed at boot; it was the world's own first 150
+ticks until the world had to open at tick 0. A
 machine over 2.5 times slower reloads with a larger `step`, as the square
 root of the shortfall, up to 0.06, which on a CPU throttled ten times took the
 picture from 3 changes a second to 33. The chosen step goes in the link, so
@@ -404,7 +499,8 @@ the piece cannot keep.
 `runWorld()`, `growPlants()`, `printGenome()`, `instHash()`, `params()`,
 `defaults()`, `settings()`, `pins()`, `pick()`, `selected()`, `markedBodies()`,
 `overlapScan()`, `hopScan()`, `wallScan()`, `stemScan()`, `seam()`, `paintOrder()`,
-`bodyDiag()`, `setSpeed()`, `setPaused()`, `debug()`. Used by `verify.js` and
+`bodyDiag()`, `setSpeed()`, `setPaused()`, `debug()`, `runSliced()`, `sized()`,
+`season()`, `seasonAt()`, `style()`. Used by `verify.js` and
 `sweep.js`. Keep them working.
 
 **Any probe that runs the world must stub `requestAnimationFrame` first.** The
@@ -470,6 +566,48 @@ from; the ones marked **[here]** were found in this codebase.
   Float32Arrays. One rounding earlier, and every instance moved in its last bit.
   `instHash()` is the only reason it was caught.
 - **Smoothness is spreading the work, not reducing it.**
+
+**Smoothness** (all [here], 2026-10-03, and all found by measuring)
+
+- **Tag every instance with an identity and compare consecutive pictures.**
+  Nothing else found these. A scratch copy of the page writes `tag(node)*4 +
+  kind` beside each instance (branch, tip leaf, twig, twig leaf; a ghost keeps
+  its node's), and a probe compares one build with the next. The scratch
+  scripts were not kept; the method is what matters, and it took an afternoon
+  to see that a leaf handed to a new tip changes identity in place and must be
+  paired by position.
+- **A probe sees only the quantity it measures.** Size times cover found the
+  pops and was blind to a color flash, to a change of paint order, to a jerk
+  of motion at constant size, and to a width. Each needed its own probe, and
+  each time the report "it is smooth now" was true of what had been measured
+  and false of the screen. When Don still sees it, the probe is missing a
+  dimension: ask which, do not argue.
+- **And only the conditions it runs in.** Stepping the world by hand and
+  building whole after each tick is not the frame loop. The sparkle, the
+  vanishing trunks, the leaves moving along a branch and the stale plant
+  length all needed an audit INSIDE the live page, at every completed build,
+  over a minute or more: one was visible at one sample in five.
+- **A jerk is a value replaced outright.** Joint rates at a look, a life cut
+  in a lump, a width that follows a count, the plant's length when a limb
+  goes, which child continues a branch. If the picture reads it, it eases
+  toward a target, by the clock, and a new node starts at the target.
+- **Ease the thing drawn, once, not its inputs one by one.** Branch width was
+  patched three times by easing an input, and each left another input that
+  stepped. One eased output ended it.
+- **Two eased copies of one quantity drift apart.** A joint is whole only if
+  the child's start reads the SAME drawn number as its parent's end.
+- **Do not read a plant's figures off `PROOT` between sweeps.** It names the
+  body's root as of the last sweep: after a split or a death it is a dead
+  slot, or the newborn that took it. Let the movement step hand them out; it
+  walks each tree from its real top.
+- **Do not decide what is drawn from something that is recounted.** `NDEP`
+  moves when a root changes. Settle it at birth.
+- **Changing a value the paint reads changes the picture.** Lengthening a
+  dying node's life to protect it reopened its leaves.
+- **A rule that says "nothing is dying" must count everything that is.**
+- **A frozen record cannot be made to move like the thing it records.** Three
+  patches to ghosts each fixed one way they differed from the living. Leaving
+  the dying alive, which was Don's idea, removed the difference.
 
 **JavaScript**
 
@@ -590,14 +728,28 @@ from; the ones marked **[here]** were found in this codebase.
   `W.y` carries `stemdark/leafK`. At the default
   leaf size a leaf is a pixel or two and the shape cannot be seen; it needs the
   leaf-size dial turned up.
-- **Only tips carry leaves, and a branch grows forward with its leaf.** A new
-  node is drawn starting on its parent and slides to its real place over
-  `sprout` ticks (`drawPos`; drawing only, it collides from its real place at
-  once). The first child of a tip is handed the tip's leaf as it was that tick
-  — width, darkness, colour (`NLW0`, `NLD0`, `NC0`) — and eases to its own, and
-  does not fade in. Before this a leaf shrank on one node while another grew
-  on the next, at every tip at once, and that was sparkle. A node that loses
-  its last child reopens a leaf over 60 ticks (`NLKAT`).
+- **A branch grows forward with its leaf.** A new node is drawn starting on its
+  parent and slides to its real place over `sprout` ticks (`drawPos`; drawing
+  only, it collides from its real place at once). The first child of a tip is
+  handed the tip's leaf as it was DRAWN that tick — width, darkness, color and
+  roll (`NLW0`, `NLD0`, `NC0`, `NLR0`/`NLR1`), including whatever the tip was
+  itself still easing from — and eases to its own; a node with a child draws no
+  tip leaf. It also takes the tip's place in the paint order (`NPS`). Any other
+  new tip opens its leaf from nothing over 60 ticks. A node that loses its
+  last child reopens a leaf over 60 ticks (`NLKAT`). Each of those details was
+  a pop when it was missing: a leaf narrowing at the bud, a leaf appearing
+  beside a leaf shrinking, a leaf jumping in the order, a leaf arriving at
+  size.
+- **Leaves along the branch, on twigs (2026-10-03).** Each plant draws a
+  leafiness of 10% to 30%, a direction its twigs curl and a phase, hashed from
+  its tone like the other looks (`NLFY`, `NTWC`, `NTPH`). Which nodes carry one
+  is settled at BIRTH from a running total handed from parent to child
+  (`NTWA`, `NTWS`), evenly spaced and alternating sides; only a node with a
+  child shows it, on a curved twig 0.8 of a step long (`twigOf`), grown in and
+  out by `twigOpen`. `twig=0` is byte-identical to before; `tipleaf=0` takes
+  the leaf off every tip. It was first read off `NDEP`, the depth below the
+  plant's root, which is recounted when the root changes, and every twig leaf
+  of a plant moved one node along in the frame of a sweep.
 - **A leaf's size is its age** (2026-09-18): born at `fatlo`, full at `fathi` by
   70% of the node's life, then CLOSING — shrinking smoothly to nothing, and
   dimming part way — by 80% (it used to go black and be removed, which is a
@@ -607,8 +759,18 @@ from; the ones marked **[here]** were found in this codebase.
   per-plant scale (`NLSC`, 0.5 to 1.5) is part of the genome: drawn by a
   founder, copied exactly within a body, nudged only when a spore founds a
   plant.
-  The kill reward lengthens a life, so a rewarded limb's leaves step back a
-  little in size and one that had dropped can return.
+  A node's life is NOT fixed: self-shade takes it in lumps of a hundred ticks
+  at a look and a kill's spoils add to it. So the paint reads a life that
+  eases toward the real one over 90 ticks (`lifeShown`); read raw, a leaf
+  jumped in size or vanished just before its node died. `rotFade`, which is
+  heartwood's, reads the real one.
+- **Nothing may change its place in the paint order while it is on screen.**
+  Within a lineage the order is by paint slot (`NPS`) and then node slot. A new
+  tip that takes a leaf takes its parent's paint slot, and a ghost is merged in
+  where its node stood (`orderGhosts`, `upTo`). Ordered by node slot alone, a
+  handed leaf jumped to wherever the new node's slot fell (872 overlapping
+  pairs flipped front to back in 400 ticks), and ghosts were a block under
+  their lineage's living (668 at the start of die-backs).
 - **Draw order must be per plant and stable.** One plant may legitimately stand
   over another; what it may not do is change which, between frames. Key it on a
   lineage id minted by the founder and inherited, never on the body's root — a
@@ -649,12 +811,17 @@ competition for room, and a fixed lifespan.
 
 ## Next
 
-The plants are the point and they are currently four quantised leaf forms on
-curved, tapered branches. Detail and beauty go here: leaf shape that reads as
-a species, a sense of overlap and depth, and whatever else survives the rule above
-about haze. `step` is already large enough that a plant is a third of a metre of
-screen — there is room in that for a great deal that would have been invisible
-on a planet.
+Open, none urgent:
+- **A streaming stick** is CPU-bound. `auto` gives it a world of bigger plants;
+  the alternative for a dense world is interpolating between rebuilds on the
+  GPU, or moving the simulation to a worker. Not built.
+- **Twigs do not flex** with their branch yet; the joint's phase is there.
+- **Each segment of a withdrawing branch starts at full speed** when the tip
+  retracting into it arrives. Continuous at the visible tip, by design, but a
+  twig leaf on that segment starts with it.
+- **`kids` per lineage**, blossoms and berries by season: asked for, deferred.
+- Branch-against-branch collision, a maximum age, and the slow fall in program
+  diversity over long runs are older open threads.
 
 Two counters exist for exactly this work and should be used before and after:
 `instHash()` says the picture did not change when it was not meant to, and
