@@ -1562,7 +1562,7 @@ const WOODFADE = Math.max(0, PARAMS.woodfade|0);
    together. Wood's NLIFE is written once, at the moment it becomes wood, and
    the reaper skips the re-estimate for it — so this expression stays true. */
 function rotFade(i){
-  const d = (ptick-NBORN[i]) - (NLIFE[i]-FADE);
+  const d = (ptick-NBORN[i]) - (NLIFE[i]-FADE);   /* the real life: see lifeShown */
   return d<=0 ? 0 : (d>=FADE ? 1 : d/FADE);
 }
 /* a few discrete node forms, so lineages are distinguishable at a glance */
@@ -1583,6 +1583,26 @@ const FORMSZ  = [0.00, 0.34, 0.68, 1.00];   // no longer read: see leafLook
    says nothing about its age, so its leaf simply goes as the wood drains. */
 const LEAF = new Float32Array(4);
 const LEAF_FULL=0.70, LEAF_GONE=0.80;
+/* ---- the life the paint reads ----
+   A node's life is not fixed after all: self-shade takes it in lumps, a
+   hundred ticks at a look, and a kill's spoils add to it. Size, closing,
+   lightness and the fade at the end are all read off age / life, so each
+   lump was a one-frame jump in a leaf: in its last fifth a leaf shrank or
+   vanished outright, just before its node died (Don, 2026-10-03, measured as
+   the largest single-tick changes in the picture). So the paint reads a life
+   that EASES toward the real one over LIFEEASE ticks, by the clock as the
+   leaf direction does; the simulation still dies at the real one, and the
+   ghost starts from whatever was drawn, so nothing jumps at the end either. */
+const LIFEEASE = 90;   /* NLV and NLVT are declared below PMAX, beside NLKAT */
+function lifeShown(i){
+  const dt=ptick-NLVT[i];
+  if(dt>0){
+    NLVT[i]=ptick;
+    const k = dt>=100000 ? 1 : 1-Math.exp(-dt/LIFEEASE);
+    NLV[i] += (NLIFE[i]-NLV[i])*k;
+  }
+  return NLV[i];
+}
 /* Only a TIP carries a leaf: a node with a child standing on it is stem, and
    shows none (Don, 2026-09-18). NLKAT is the tick a node last went between
    having children and having none, and the leaf closes or opens over LEAFT
@@ -1609,7 +1629,7 @@ function leafLook(i){
     LEAF[0]=NLEAF[i]; LEAF[1]=1-wf; LEAF[2]= wf<1 && NLEAF[i]>=0 ? 1 : 0;
     return;
   }
-  const a=(ptick-NBORN[i])/Math.max(1,NLIFE[i]);
+  const a=(ptick-NBORN[i])/Math.max(1,lifeShown(i));
   if(a>=LEAF_GONE){ LEAF[0]=1; LEAF[1]=0; LEAF[2]=0; NLEAF[i]=-1; return; }
   const s = a<LEAF_FULL ? a/LEAF_FULL : 1;
   LEAF[0]=s; LEAF[2]=1;
@@ -1661,10 +1681,18 @@ const NLEAF = new Float32Array(PMAX), NLSC = new Float32Array(PMAX);
 const NLDX=new Float32Array(PMAX), NLDY=new Float32Array(PMAX), NLDT=new Int32Array(PMAX);
 const LEAFEASE = 45;                          /* ticks: about a quarter of a second */
 const ROLL = new Float32Array(2);
+/* The phase only advances on a movement step, every mstep ticks, so a roll
+   read straight off it changed in jumps twenty times a second, and a fast
+   joint flicked its leaf's width by a third at each (2026-10-03, the largest
+   class of one-tick change left once the pops were gone). Between steps it
+   reads the phase carried on at the joint's own rate, which is where the next
+   step puts it. Paint only. */
+let MOVED_AT = 0;
 function leafRoll(i){
   const amt=PARAMS.roll;
   if(!(amt>0)){ ROLL[0]=1; ROLL[1]=1; return; }
-  const c=Math.abs(Math.cos(NPH[i]*0.5 + (Math.imul(i,2654435761)>>>0)*1.4629e-9));
+  const since=Math.min(Math.max(0, ptick-MOVED_AT), Math.max(1, PARAMS.mstep|0));
+  const c=Math.abs(Math.cos((NPH[i]+NW[i]*since)*0.5 + (Math.imul(i,2654435761)>>>0)*1.4629e-9));
   ROLL[0]=1-amt*(1-c); ROLL[1]=1-0.22*amt*(1-c);
 }
 const NTL = new Float32Array(PMAX), NTS = new Float32Array(PMAX);
@@ -1704,6 +1732,9 @@ function freshTone(i){
 function varyO(i){ return PARAMS.vary>0 ? NVO[i] : 1; }
 function varyS(i){ return PARAMS.vary>0 ? NVS[i] : 1; }
 const NLKAT = new Int32Array(PMAX);
+const NLR0 = new Float32Array(PMAX), NLR1 = new Float32Array(PMAX);   /* the roll a handed leaf arrived with */
+const NLV = new Float32Array(PMAX), NLVT = new Int32Array(PMAX);
+const NTWO = new Float32Array(PMAX);   /* how open a twig was at the node's last change between tip and not */   /* the life the paint reads: see lifeShown */
 /* ---- a branch grows forward, and takes its leaf with it ----
    A bud used to appear whole at its final place, fading in, while the leaf
    on the node behind it shrank away: two things changing at once at every
@@ -2926,7 +2957,7 @@ function nodeColour(i,out){
   const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i]*SEASON.sat*STYLE.sat*satx)*Math.max(0, Math.min(1, PARAMS.sat));
   /* Lightness is age: light at birth, darkening over the node's life, so
      the growing edge of a plant is bright and its old interior is deep. */
-  const age = Math.min(1, (ptick-NBORN[i])/Math.max(1, NLIFE[i]));
+  const age = Math.min(1, (ptick-NBORN[i])/Math.max(1, lifeShown(i)));
   const l = Math.max(0.12, Math.min(0.86, 0.64 - 0.32*age + NTL[i] + SEASON.light));
   hslToRgb(h, sat, l, out);
 }
@@ -3396,20 +3427,30 @@ function orderGhosts(){
 const TW = new Float32Array(12);
 const TWIG_C = Math.cos(55*Math.PI/180), TWIG_S = Math.sin(55*Math.PI/180);
 const TBEND_C = Math.cos(35*Math.PI/180), TBEND_S = Math.sin(35*Math.PI/180);
+/* From wherever it was when the node last changed, not from 0 or 1: a child
+   that died young left a twig half grown, and fading it out from full made
+   it leap open first. */
+function twigOpen(i){
+  const t=(ptick-NLKAT[i])/LEAFT, sm = t<=0 ? 0 : (t>=1 ? 1 : t*t*(3-2*t)), o=NTWO[i];
+  return NLK[i]>0 ? o+(1-o)*sm : o*(1-sm);
+}
 function twigLeafy(i){
   const p=NLFY[i], d=NDEP[i], ph=NTPH[i];
   const b=Math.floor((d+1)*p+ph);
   return b>Math.floor(d*p+ph) ? ((b&1) ? 1 : -1) : 0;
 }
 function twigOf(i){
-  if(PARAMS.twig<=0 || NLIVE[i]!==1 || NLK[i]===0 || NDYING[i]) return false;
+  if(PARAMS.twig<=0 || NLIVE[i]!==1 || NDYING[i]) return false;
   const side=twigLeafy(i); if(side===0) return false;
-  /* how far the twig has grown: from the birth of the child that took this
-     node's tip leaf */
-  const c=contOf(i); let open=1;
-  if(c>=0){ const t=(ptick-NBORN[c])/LEAFT; open = t<=0 ? 0 : (t>=1 ? 1 : t*t*(3-2*t)); }
+  /* How far the twig has grown, from NLKAT, the tick the node last changed
+     between tip and not: it grows in over LEAFT once the node buds, and goes
+     out over LEAFT if its last child dies, while the tip leaf comes back over
+     the same ticks. Timed from the child that took the tip leaf, it shrank to
+     nothing and regrew whenever that child was replaced, and it vanished in
+     one frame when the last child went (Don, 2026-10-03). */
+  const open = twigOpen(i);
   if(open<=0) return false;
-  const a=(ptick-NBORN[i])/Math.max(1,NLIFE[i]);
+  const a=(ptick-NBORN[i])/Math.max(1,lifeShown(i));
   if(a>=LEAF_GONE) return false;
   let size = a<LEAF_FULL ? a/LEAF_FULL : 1, dark=1, close=1;
   if(a>=LEAF_FULL){ const q=(a-LEAF_FULL)/(LEAF_GONE-LEAF_FULL); dark=1-0.45*q; close=1-q*q*(3-2*q); }
@@ -3417,7 +3458,9 @@ function twigOf(i){
   let ux=NHX[i], uy=NHY[i];
   if(NSTEMA[i]>0){ const k=i*8, hx=NSG[k+4], hy=NSG[k+5], hl=Math.sqrt(hx*hx+hy*hy); if(hl>1e-9){ ux=hx/hl; uy=hy/hl; } }
   const ss=side*TWIG_S, tx=ux*TWIG_C-uy*ss, ty=ux*ss+uy*TWIG_C;
-  const L=PARAMS.twiglen*NSTEP[i]*open, cb=NTWC[i]*TBEND_S;
+  /* and it is drawn in as its leaf closes, or it is left as a bare stick that
+     vanishes when the leaf has gone */
+  const L=PARAMS.twiglen*NSTEP[i]*open*close, cb=NTWC[i]*TBEND_S;
   const t1x=(tx*TBEND_C+ty*cb)*L, t1y=(-tx*cb+ty*TBEND_C)*L;
   const t2x=(tx*TBEND_C-ty*cb)*L, t2y=(tx*cb+ty*TBEND_C)*L;
   TW[0]=tx*L; TW[1]=ty*L; TW[2]=t1x; TW[3]=t1y; TW[4]=t2x; TW[5]=t2y;
@@ -3615,7 +3658,9 @@ function emitNode(i, pass, w){
     /* a shaped leaf carries its own proportions, and covers less of its
        square than a disc does, so it is drawn larger to read as the same */
     const shp=NSHAPE[i], lw = shp===0 ? wid : wid*LEAFBIG*LEAFFIT[shp];
-    leafRoll(i); leafK*=ROLL[1];
+    leafRoll(i);
+    if(carried){ const k=1-grown; ROLL[0]+=(NLR0[i]-ROLL[0])*k; ROLL[1]+=(NLR1[i]-ROLL[1])*k; }
+    leafK*=ROLL[1];
     IBUF[w+I_B]= shp===0 ? wid*asp : lw; IBUF[w+I_B+1]=lw*ROLL[0];
     /* The leaf lies along the END of its branch, not along the chord, or a
        curved branch would meet its leaf at an angle. Handed over as a unit
@@ -3860,6 +3905,18 @@ function ghost(i){
   leafRoll(i); GHOST[g+35]=ROLL[0]; GHOST[g+25]*=ROLL[1];
   { const dl=NLDX[i]*NLDX[i]+NLDY[i]*NLDY[i];
     GHOST[g+36]= dl>0.5 ? NLDX[i] : NHX[i]; GHOST[g+37]= dl>0.5 ? NLDY[i] : NHY[i]; }
+  /* A young tip still easing from the leaf it was handed is drawn with that
+     leaf, not its own; its ghost must start from the same, or a child that
+     died young shrank its leaf by four fifths in the frame it died. */
+  { const gw0=sproutOf(i);
+    if(gw0<1 && NLW0[i]>0){
+      const k=1-gw0;
+      GHOST[g+2]+=(NLW0[i]-GHOST[g+2])*k;
+      GHOST[g+25]+=(NLD0[i]*NLR1[i]-GHOST[g+25])*k;
+      GHOST[g+35]+=(NLR0[i]-GHOST[g+35])*k;
+      const c=i*3;
+      GHOST[g+3]+=(NC0[c]-GHOST[g+3])*k; GHOST[g+4]+=(NC0[c+1]-GHOST[g+4])*k; GHOST[g+5]+=(NC0[c+2]-GHOST[g+5])*k;
+    } }
   /* A node with a twig leaf goes with it: the twig and its leaf are what was
      on screen, and the leaf withdraws along the twig as the node withdraws
      along its branch. Otherwise a culled plant dropped every twig leaf in the
@@ -3990,7 +4047,7 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
   if(par<0 && src>=0){ const v=NLSC[i]*(1+(prnd()*2-1)*0.25); NLSC[i]= v<LSC_LO?LSC_LO:(v>LSC_HI?LSC_HI:v);
                        NSHAPE[i]=freshShape(i); freshTone(i); }
   NGEN[i]++; NPAR[i]=par; NPGEN[i] = par>=0 ? NGEN[par] : -1;
-  NLK[i]=0; NLKAT[i]=-1000000; NLW0[i]=0; NLD0[i]=1;
+  NLK[i]=0; NLKAT[i]=-1000000; NLW0[i]=0; NLD0[i]=1; NTWO[i]=0;
   let handed=false;
   if(par>=0){ NAS[i]=NAS[par]; NAN_[i]=NAN_[par]; NKL[i]=NKL[par]; } else { NAS[i]=0; NAN_[i]=0; NKL[i]=0; }
   /* nothing of this node has been painted yet. A recycled slot used to keep
@@ -4009,10 +4066,14 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
       nodePaint(par, PAINT); paintFor=-1;
       NC0[i*3]=PAINT[0]; NC0[i*3+1]=PAINT[1]; NC0[i*3+2]=PAINT[2];
       NLDX[i]=NLDX[par]; NLDY[i]=NLDY[par]; handed=true;
+      /* and how it was rolled: without it the handed leaf narrowed or widened
+         by up to half in the frame of the bud */
+      leafRoll(par); NLR0[i]=ROLL[0]; NLR1[i]=ROLL[1];
     }
   }
   if(!handed || !(NLDX[i]*NLDX[i]+NLDY[i]*NLDY[i] > 0.5)){ NLDX[i]=hx; NLDY[i]=hy; }
-  NLDT[i]=ptick;
+  NLDT[i]=ptick; NLVT[i]=-1000000;     /* the paint's life starts at the real one */
+  if(par>=0 && NLK[par]===0) NTWO[par]=twigOpen(par);
   if(par>=0 && ++NLK[par]===1) NLKAT[par]=ptick;
   PROOT[i] = par>=0 ? PROOT[par] : i;   /* body identity, kept fresh between sweeps */
   if(par>=0){ NFOUND[i]=NFOUND[par]; NFST[i]=NFST[par]; } else { NFOUND[i]=ptick; NFST[i]=0; }
@@ -4068,6 +4129,7 @@ function freeNode(i){
     ghost(j);
     NLIVE[j]=0; NONF[j]=0; debin(j, wasWood); PFREE[freeN++]=j;
     if(par<0) break;
+    if(NLK[par]===1) NTWO[par]=twigOpen(par);
     if(--NLK[par] > 0) break;
     NLKAT[par]=ptick;                       /* a tip again: see leafLook */
     if(NLIVE[par]!==2) break;      /* a living parent simply loses a child */
@@ -5053,6 +5115,7 @@ function spoil(w, got){
 }
 function* movePlants(){
   if(nodeHigh===0) return;
+  MOVED_AT = ptick;
   const dt = Math.max(1, PARAMS.mstep|0), bend = Math.max(0, PARAMS.bend);
   /* child lists, so bodies can be walked downward: parents are not lower
      indices than their children once slots recycle */
