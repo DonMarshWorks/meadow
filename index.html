@@ -3126,7 +3126,7 @@ let frontDraw=0, frontDrop=0, frontYoung=0, budOk=0, budNo=0;
    it could not cheaply recover from that. Slots 0 and 1 are the position
    itself here, there is no hidden half of a flat arena, and three floats a
    ghost go with them. */
-const GHOSTN = 24576, GH_F = 46;   /* 38..45: the twig, see twigOf */
+const GHOSTN = 24576, GH_F = 47;   /* 38..45: the twig, see twigOf; 46: its paint slot, see NPS */
 const GC = new Float32Array(3);
 /* One instance, two meanings, because leaves and branches must go down in
    ONE draw to keep the per-plant paint order:
@@ -3189,6 +3189,14 @@ let instN = 0;
    node order is preserved inside each body so the result is stable frame to
    frame. */
 const ORDER = new Int32Array(PMAX), BOFF = new Int32Array(PMAX+1);
+/* ---- where a node is painted within its lineage ----
+   Its slot, as it was, EXCEPT that the new tip which takes a tip's leaf takes
+   the tip's paint slot too, so a growing branch is painted in one place and
+   its leaf does not move in the order when it is handed on. Ordered by slot,
+   the handed leaf jumped to wherever the new node's slot fell and flipped
+   against whatever it overlapped, at every bud: 872 overlapping pairs in 400
+   ticks (2026-10-03). Within one paint slot, by node slot. Paint only. */
+const NPS = new Int32Array(PMAX), OTMP = new Int32Array(PMAX), PSC = new Int32Array(PMAX+1);
 let orderN = 0;
 /* Paint order, and the thing it must not do is change.
    These are all on one sphere with no depth test, so which plant is on top of
@@ -3207,12 +3215,20 @@ let orderN = 0;
    only by a founder, and never touched again. Both halves of a split keep it,
    stay adjacent, and neither moves. */
 function orderByLineage(){
-  BOFF.fill(0,0,nodeHigh+1);
-  orderN = 0;
-  for(let i=0;i<nodeHigh;i++) if(NLIVE[i]!==0){ BOFF[NDRAW[i]]++; orderN++; }
+  /* by paint slot, slot order kept within it ... */
+  PSC.fill(0,0,nodeHigh+1);
+  let m=0;
+  for(let i=0;i<nodeHigh;i++) if(NLIVE[i]!==0){ let p=NPS[i]; if(p<0||p>=nodeHigh) p=i; NPS[i]=p; PSC[p]++; m++; }
   let run=0;
+  for(let r=0;r<nodeHigh;r++){ const c=PSC[r]; PSC[r]=run; run+=c; }
+  for(let i=0;i<nodeHigh;i++) if(NLIVE[i]!==0) OTMP[PSC[NPS[i]]++]=i;
+  /* ... then by lineage, stably */
+  BOFF.fill(0,0,nodeHigh+1);
+  orderN = m;
+  for(let j=0;j<m;j++) BOFF[NDRAW[OTMP[j]]]++;
+  run=0;
   for(let r=0;r<nodeHigh;r++){ const c=BOFF[r]; BOFF[r]=run; run+=c; }
-  for(let i=0;i<nodeHigh;i++) if(NLIVE[i]!==0) ORDER[BOFF[NDRAW[i]]++]=i;
+  for(let j=0;j<m;j++){ const i=OTMP[j]; ORDER[BOFF[NDRAW[i]]++]=i; }
 }
 
 /* ── what a node looks like, in one place ──────────────────────────────
@@ -3391,24 +3407,44 @@ function emitGhost(n, w){
 /* The dead, bucketed by the lineage they belonged to and in the same ascending
    key order the living are walked in, so the two can be merged. */
 const GORDER = new Int32Array(GHOSTN), GOFF = new Int32Array(PMAX+1);
+/* each ghost's lineage and the slot its node was painted at, and scratch for
+   the two-pass sort */
+const GKEY = new Int32Array(GHOSTN), GIDX = new Int32Array(GHOSTN), GPS = new Int32Array(GHOSTN), GTMP = new Int32Array(GHOSTN), GIC = new Int32Array(PMAX+1);
 let gorderN = 0;
+/* By lineage, and within a lineage by the slot the node was painted at, so
+   a ghost is merged in exactly where its node stood in the order (see upTo).
+   They were a block under their lineage's living, in ghost-slot order, so a
+   dying leaf dropped behind every living leaf of its plant in the frame it
+   died and wherever it overlapped one the picture flipped: 668 overlapping
+   pairs in 400 ticks, a flash at the start of every die-back (Don,
+   2026-10-03). Two stable counting sorts, slot then lineage. */
 function orderGhosts(){
-  GOFF.fill(0,0,nodeHigh+1);
-  gorderN = 0;
+  let m=0;
+  GIC.fill(0,0,nodeHigh+1);
   for(let n=0;n<GHOSTN;n++){
     const g=n*GH_F, d=ptick-GHOST[g+6];
     if(!(d>=0 && d<GHOST[g+16]) || GHOST[g+2]<=0) continue;
     let k=GHOST[g+15]|0; if(k<0||k>=nodeHigh) k=0;
-    GOFF[k]++; gorderN++;
+    let ix=(GHOST[g+12]%PMAX)|0; if(ix<0||ix>nodeHigh) ix=nodeHigh;
+    let ps=GHOST[g+46]|0; if(ps<0||ps>nodeHigh) ps=nodeHigh;
+    GKEY[n]=k; GIDX[n]=ix; GPS[n]=ps; GIC[ix]++; GTMP[m++]=n;
   }
   let run=0;
+  for(let r=0;r<=nodeHigh;r++){ const c=GIC[r]; GIC[r]=run; run+=c; }
+  for(let j=0;j<m;j++){ const n=GTMP[j]; GORDER[GIC[GIDX[n]]++]=n; }
+  GIC.fill(0,0,nodeHigh+1);
+  for(let j=0;j<m;j++) GIC[GPS[GORDER[j]]]++;
+  run=0;
+  for(let r=0;r<=nodeHigh;r++){ const c=GIC[r]; GIC[r]=run; run+=c; }
+  for(let j=0;j<m;j++){ const n=GORDER[j]; GTMP[GIC[GPS[n]]++]=n; }
+  GORDER.set(GTMP.subarray(0,m));
+  GOFF.fill(0,0,nodeHigh+1);
+  for(let j=0;j<m;j++) GOFF[GKEY[GORDER[j]]]++;
+  run=0;
   for(let r=0;r<nodeHigh;r++){ const c=GOFF[r]; GOFF[r]=run; run+=c; }
-  for(let n=0;n<GHOSTN;n++){
-    const g=n*GH_F, d=ptick-GHOST[g+6];
-    if(!(d>=0 && d<GHOST[g+16]) || GHOST[g+2]<=0) continue;
-    let k=GHOST[g+15]|0; if(k<0||k>=nodeHigh) k=0;
-    GORDER[GOFF[k]++]=n;
-  }
+  for(let j=0;j<m;j++){ const n=GORDER[j]; GTMP[GOFF[GKEY[n]]++]=n; }
+  GORDER.set(GTMP.subarray(0,m));
+  gorderN = m;
 }
 
 /* one node of a plant: pass 0 lays its branch, pass 1 its foliage */
@@ -3755,11 +3791,16 @@ function beginInstances(){
 /* Everything dead that sorts at or before this lineage, including whole
    lineages with nothing living left. The cursor lives on SB because the walk
    can now stop between two frames and resume where it left off. */
-function upTo(key, w){
+/* ... and of this lineage, those whose node stood at or before slot idx: a
+   ghost goes under a newborn that took its slot, as it was under it */
+function upTo(key, w, idx){
   const WLIM = SB.layered ? LEAF0-2*INST : (MAXINST-2)*INST;
   while(SB.gi<gorderN && w<WLIM && SB.wl<(MAXINST-2)*INST){
     const n=GORDER[SB.gi];
-    if(key>=0 && GHOST[n*GH_F+15] > key) break;
+    if(key>=0){ const gk=GKEY[n];
+      if(gk>key) break;
+      if(gk===key){ const ps = idx<0 ? -1 : (idx>=1e9 ? 1e9 : NPS[idx]);
+        if(GPS[n]>ps || (GPS[n]===ps && GIDX[n]>idx)) break; } }
     w = emitGhost(n, w); SB.gi++;
   }
   return w;
@@ -3786,10 +3827,11 @@ function stepInstances(budgetMs){
     const key = NDRAW[ORDER[SB.a]];
     let b=SB.a;
     while(b<SB.n && NDRAW[ORDER[b]]===key) b++;
-    w = upTo(key, w);
+    w = upTo(key, w, SB.limbs===0 ? -1 : 1e9);
     if(SB.layered){
       for(let q=SB.a;q<b && w<WLIM && SB.wl<(MAXINST-2)*INST;q++){
         const i=ORDER[q];
+        w = upTo(key, w, i);
         if(PARAMS.twigs>0){
           /* branch first, because the leaf pass reads what the branch pass
              left (NSTEMA). Both go to the leaf layer; a node that turns out
@@ -3804,6 +3846,7 @@ function stepInstances(budgetMs){
     } else if(SB.limbs===0){
       for(let q=SB.a;q<b && w<WLIM;q++){
         const i=ORDER[q];
+        w = upTo(key, w, i);
         w = emitNode(i, 0, w); w = emitNode(i, 1, w);
       }
     } else {
@@ -3957,6 +4000,7 @@ function ghost(i){
      an-array-index-is-not-an-identity trap this project has already been
      caught by once in the frontier. */
   GHOST[g+12]=tag(i);
+  GHOST[g+46]=NPS[i];
   /* the lineage it belonged to, so it can be painted inside that lineage's
      place in the order rather than underneath the whole world */
   GHOST[g+15]=NDRAW[i];
@@ -4072,6 +4116,7 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
     }
   }
   if(!handed || !(NLDX[i]*NLDX[i]+NLDY[i]*NLDY[i] > 0.5)){ NLDX[i]=hx; NLDY[i]=hy; }
+  NPS[i] = handed ? NPS[par] : i;
   NLDT[i]=ptick; NLVT[i]=-1000000;     /* the paint's life starts at the real one */
   if(par>=0 && NLK[par]===0) NTWO[par]=twigOpen(par);
   if(par>=0 && ++NLK[par]===1) NLKAT[par]=ptick;
@@ -5946,6 +5991,10 @@ let sheetSlice = 0;
    and a bounded cost every frame reaches the same freshness without the
    stall. */
 let sheetGap = 0, lastSheet = 0, fpsNow = 60;
+/* a sliced rebuild's turn: it earns sheetSlice a frame and starts when it has
+   earned what the last one cost, so pictures come as often as they did when
+   the world ran alongside them (see the frame loop) */
+let sheetCredit = 0, lastBuildMs = 0, buildWork = 0;
 
 /* ---- the letterbox ----
    The arena is 16:9 and the window is not. The largest 16:9 rectangle that
@@ -5979,14 +6028,24 @@ function renderPlants(){
   SELFADE=selFade();
   const _b0 = performance.now();
   if(plantsDirty || SB.busy){
+    if(sheetSlice>0) sheetCredit = Math.min(sheetCredit + sheetSlice, lastBuildMs + 4*sheetSlice);
     if(!SB.busy){
-      if(!(sheetSlice <= 0 && sheetGap > 0 && _b0 - lastSheet < sheetGap)){
+      const turn = sheetSlice<=0 ? !(sheetGap > 0 && _b0 - lastSheet < sheetGap) : sheetCredit >= lastBuildMs;
+      if(turn){
+        buildWork = 0;
         lastSheet = _b0; PERF.sheets++;
         plantsDirty=false;
         beginInstances();
       }
     }
-    if(SB.busy && stepInstances(sheetSlice)){
+    const slice = simHeld>0 && sheetSlice>0 ? sheetSlice+simHeld : sheetSlice;
+    simHeld = 0;
+    const _w0 = performance.now();
+    const done = SB.busy && stepInstances(slice);
+    buildWork += performance.now()-_w0;
+    if(done){
+      lastBuildMs = buildWork;
+      if(sheetSlice>0) sheetCredit -= buildWork; else sheetCredit = 0;
       /* finished: hand the whole thing over at once, so what the GPU draws is
          never half of one build and half of the next */
       const _u0 = performance.now();
@@ -6288,6 +6347,7 @@ let ecoDebt = 0;
 let res = 1;                           // adaptive resolution multiplier
 let lastFrameMs = 16.7;
 let lastBudget = 0, workSum = 0;
+let simHeld = 0;                       // the world's share of this frame, given to a rebuild in flight
 let gpuLast = 0, gpuFresh = false;
 const GPUPX = new Uint8Array(4);
 let gpuMs = 0, gpuAt = 0;              // how long the GPU took over one frame's draws, and when that was last asked
@@ -6406,9 +6466,25 @@ function frame(now){
     const budget = Math.min(PARAMS.ecomax,
                      Math.max(frameMs*PARAMS.ecoshare, frameMs*0.85 - otherMs));
     lastBudget = budget;
-    while(ecoDebt >= 1 || tickGen){
-      if(plantsSlice(_s0+budget)){ ecoDebt -= 1; didTicks++; }
-      if(performance.now()-_s0 >= budget) break;
+    /* Not while a picture is half built. A rebuild spread over several frames
+       read the world at several ticks: a node that died between two of its
+       slices was drawn neither alive nor as a ghost, and a tip that budded
+       handed its leaf to a child the build did not know of. Twelve to fifty
+       leaves were missing from every such picture, all over the arena, and
+       the first slow moment made the whole screen sparkle; a plant culled
+       during one lost most of its leaves for a frame before it died back
+       (Don, 2026-10-03). So the world waits, and the rebuild is given the
+       world's share of the frame to finish in (see renderPlants). */
+    if(SB.busy){ simHeld = budget; }
+    else {
+      /* and in a frame with no picture in flight the world takes the
+         picture's share as well, so over a cycle each gets what it had when
+         they overlapped: the same work a frame, the same ticks a second */
+      const wb = budget + (sheetSlice>0 ? sheetSlice : 0);
+      while(ecoDebt >= 1 || tickGen){
+        if(plantsSlice(_s0+wb)){ ecoDebt -= 1; didTicks++; }
+        if(performance.now()-_s0 >= wb) break;
+      }
     }
   }
   const _simMs = performance.now()-_s0;
