@@ -1325,7 +1325,13 @@ const PARAMS = {
                     // 5,000 is four and a half times. 0 = every branch alike.
   stemdark: 0.50,   // how much darker a branch is than the nodes it joins. The
                     // structure reads far better when the two separate.
-  stem:    0.05,    // thickness of the branch drawn between a node and its
+  taperk:  4,       // how the thickness is spread along a branch: 0 is an even
+                    // cone, and the higher it is the longer the ends stay
+                    // thin and the more of it is at the base. At 4 the outer
+                    // half of a branch has under an eighth of the root's.
+  thin:    0.035,   // half-width of a branch that carries nothing, in steps:
+                    // every tip and every twig, whatever the dial below says
+  stem:    0.12,    // thickness of the branch drawn between a node and its
                     // parent, per step. 0 draws none. Without it a plant is a
                     // scatter of disconnected blobs and the branching — the
                     // whole structure of the thing — is invisible.
@@ -1623,7 +1629,7 @@ const LEAFT = 60, LEAFBIG = 1.7;
 const LEAFFIT = [1, 1.12, 0.90, 0.74, 0.84, 1, 1, 0.84, 1, 1, 0.94, 1.08, 1.00];
 function leafLook(i){
   /* with a child on it a node has no leaf, at once: its first child took it */
-  const dt=(ptick-NLKAT[i])/LEAFT, open = NLK[i]>0 ? 0 : dt;
+  const dt=(ptick-NLKAT[i])/LEAFT, open = (NLK[i]>0 || (NDYING[i] && !NDTIP[i])) ? 0 : dt;
   LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf;
   if(LEAF[3]<=0){ LEAF[0]=0; LEAF[1]=1; LEAF[2]=0; return; }
   if(NLIVE[i]===2){
@@ -1766,6 +1772,15 @@ function drawPos(i){
     x-=(cX(j)-cX(p))*lag; y-=(cY(j)-cY(p))*lag;
     j=p;
   }
+  /* withdrawing: toward where its parent is drawn NOW, so it goes on riding
+     and swinging with the plant the whole way in */
+  if(NDYING[i]){
+    const e=dyingE(i), p=NPAR[i];
+    if(e>0 && p>=0 && NLIVE[p]!==0 && NGEN[p]===NPGEN[i]){
+      drawPos(p);
+      x+=(DP[0]-x)*e; y+=(DP[1]-y)*e;
+    }
+  }
   DP[0]=x; DP[1]=y;
 }
 /* ---- a plant has a leaf shape ----
@@ -1884,6 +1899,16 @@ const NLA=new Float32Array(PMAX), NW=new Float32Array(PMAX);
    froze there. */
 const NPH=new Float32Array(PMAX);
 const NREACH=new Float32Array(PMAX);
+/* how far it is from a node out to its farthest standing tip, recounted on
+   every movement step with NDESC. NREACH is only ever raised, at a birth, and
+   so remembers limbs long gone; this is what the branch is drawn from. */
+const NRD=new Float32Array(PMAX);
+/* how much of the root's thickness a point has, by how far along it is from
+   the tip (0) to the root (1): (e^kx - 1)/(e^k - 1), tabled */
+const TAPERK = Math.max(0, PARAMS.taperk);
+const ETAB = new Float32Array(1026);
+for(let n=0;n<=1025;n++){ const x=Math.min(1,n/1024); ETAB[n] = TAPERK>1e-3 ? (Math.exp(TAPERK*x)-1)/(Math.exp(TAPERK)-1) : x; }
+function taperF(x){ if(!(x>0)) return 0; if(x>=1) return 1; const p=x*1024, k=p|0; return ETAB[k]+(ETAB[k+1]-ETAB[k])*(p-k); }
 /* and how many standing nodes it carries, living or wood, recounted exactly
    on every movement step from the child lists — so a cut, a rot or a cull is
    felt on the next step without any bookkeeping at the moment it happens */
@@ -3168,8 +3193,19 @@ const GC = new Float32Array(3);
      a branch  A = the parent end, B = the child end, C and D = the Hermite
                tangents at those two ends, W = the half-width at each
    and four floats of colour either way. */
-const INST = 14;                                 // floats per instance
-const I_A=0, I_B=2, I_C=4, I_D=6, I_W=8, I_COL=10;
+const INST = 15;                                 // floats per instance
+const I_A=0, I_B=2, I_C=4, I_D=6, I_W=8, I_COL=10, I_C0=14;
+/* I_C0, a branch only: the colour it STARTS at, its parent's, packed as three
+   bytes plus one, so a branch runs from its parent's colour to its own and
+   there is no step of colour at a joint (Don, 2026-10-03). Its sign, and the
+   sign of W.y, say whether the start and the end are capped round: a side
+   branch's start and a tip's end are, and a joint along a run is not, because
+   two caps over each other there would show as a bead on a translucent
+   branch. */
+function packCol(r,g,b){
+  const R=r<=0?0:(r>=1?255:(r*255)|0), G=g<=0?0:(g>=1?255:(g*255)|0), B=b<=0?0:(b>=1?255:(b*255)|0);
+  return R + G*256 + B*65536 + 1;
+}
 /* ---- branches are curves ----
    A branch used to be an ellipse laid along the straight line from parent to
    child, so a plant was a chain of jointed sticks. It is now a ribbon on a
@@ -3280,6 +3316,15 @@ function orderByLineage(){
 const PAINT = new Float32Array(4);
 /* which node PAINT currently holds, or -1 — see emitNode */
 let paintFor = -1;
+/* A node's paint, kept for the length of one build: a branch needs its
+   parent's colour as well as its own, and the parent may be painted before
+   or after it. Asked for twice, it is mixed once. */
+const NPC = new Float32Array(PMAX*4), NPCT = new Int32Array(PMAX).fill(-1); let BUILD = 0;
+function paintCached(i){
+  const o=i*4;
+  if(NPCT[i]!==BUILD){ nodePaint(i, PAINT); NPC[o]=PAINT[0]; NPC[o+1]=PAINT[1]; NPC[o+2]=PAINT[2]; NPC[o+3]=PAINT[3]; NPCT[i]=BUILD; }
+  else { PAINT[0]=NPC[o]; PAINT[1]=NPC[o+1]; PAINT[2]=NPC[o+2]; PAINT[3]=NPC[o+3]; }
+}
 function nodePaint(i, out){
   const wood = NLIVE[i]===2;
   nodeColour(i, GC);
@@ -3428,6 +3473,7 @@ function emitGhost(n, w){
     IBUF[w+I_C]=VX(GHOST[g+19],GHOST[g+20])*keep; IBUF[w+I_C+1]=VY(GHOST[g+19],GHOST[g+20])*keep;
     IBUF[w+I_D]=VX(GHOST[g+21],GHOST[g+22])*keep; IBUF[w+I_D+1]=VY(GHOST[g+21],GHOST[g+22])*keep;
     IBUF[w+I_W]=GHOST[g+23]*th; IBUF[w+I_W+1]=GHOST[g+24]*th;
+    IBUF[w+I_C0]=packCol(gr*d, gg*d, gb*d);
     IBUF[w+I_COL]=gr*d; IBUF[w+I_COL+1]=gg*d; IBUF[w+I_COL+2]=gb*d;
     IBUF[w+I_COL+3]=ga*GHOST[g+14];
     w+=INST;
@@ -3530,7 +3576,7 @@ function twigLeafy(i){
   return b>Math.floor(d*p+ph) ? ((b&1) ? 1 : -1) : 0;
 }
 function twigOf(i){
-  if(PARAMS.twig<=0 || NLIVE[i]!==1 || NDYING[i]) return false;
+  if(PARAMS.twig<=0 || NLIVE[i]!==1) return false;
   const side=twigLeafy(i); if(side===0) return false;
   /* How far the twig has grown, from NLKAT, the tick the node last changed
      between tip and not: it grows in over LEAFT once the node buds, and goes
@@ -3554,7 +3600,7 @@ function twigOf(i){
   const t1x=(tx*TBEND_C+ty*cb)*L, t1y=(-tx*cb+ty*TBEND_C)*L;
   const t2x=(tx*TBEND_C-ty*cb)*L, t2y=(tx*cb+ty*TBEND_C)*L;
   TW[0]=tx*L; TW[1]=ty*L; TW[2]=t1x; TW[3]=t1y; TW[4]=t2x; TW[5]=t2y;
-  TW[6]=PARAMS.stem*varyS(i)*STYLE.stem*NSTEP[i]*0.7*0.8;
+  TW[6]= PARAMS.stem>0 ? PARAMS.thin*PARAMS.step*0.8 : 0;   /* a twig is always thin; and gone when branches are */
   TW[7]=leafW(size)*NSTEP[i]*NLSC[i]*open*close*SEASON.leaf;
   TW[8]=dark;
   const tl=Math.sqrt(t2x*t2x+t2y*t2y)||1; TW[9]=t2x/tl; TW[10]=t2y/tl;
@@ -3582,12 +3628,17 @@ function writeTwig(w, x, y, T, k, r, g, b, al){
   IBUF[w+I_C]=T[2]*k; IBUF[w+I_C+1]=T[3]*k;
   IBUF[w+I_D]=T[4]*k; IBUF[w+I_D+1]=T[5]*k;
   IBUF[w+I_W]=T[6]; IBUF[w+I_W+1]=T[6]*0.55;
+  IBUF[w+I_C0]=packCol(r,g,b);
   IBUF[w+I_COL]=r; IBUF[w+I_COL+1]=g; IBUF[w+I_COL+2]=b;
   IBUF[w+I_COL+3]=al;
   return w+INST;
 }
 function emitNode(i, pass, w){
   if(NLIVE[i]===0) return w;
+  /* how far it has withdrawn, if it is going; all of it scales by what is left */
+  const de = NDYING[i] ? dyingE(i) : 0;
+  if(de>=1) return w;
+  const keep = 1-de;
     /* Everything geometric about this node was settled when it was born; see
        the note on NU. What is left here changes every tick and cannot be
        cached: the colour, which carries growth, wood and rot. */
@@ -3602,7 +3653,7 @@ function emitNode(i, pass, w){
        leaves in the world may be. Setting the low knob to zero lets the
        smallest forms vanish and leaves the branching bare. */
     leafLook(i);
-    let wid=leafW(LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3];
+    let wid=leafW(LEAF[0])*NSTEP[i]*NLSC[i]*LEAF[3]*keep;
     let leafK=LEAF[1]; const leafOn=LEAF[2]>0;
     const asp=FORMASP[(form>>2)&3];
 
@@ -3615,8 +3666,10 @@ function emitNode(i, pass, w){
        clears it before it starts. (With limbs set, the passes are no longer
        adjacent and the cache simply never hits, which is correct rather than
        merely safe.) */
-    if(paintFor!==i){ nodePaint(i, PAINT); paintFor=i; }
-    let r=PAINT[0], g=PAINT[1], b=PAINT[2];
+    paintCached(i);
+    /* and it dims a little as it goes, as a ghost did */
+    const dim = 1-0.35*de;
+    let r=PAINT[0]*dim, g=PAINT[1]*dim, b=PAINT[2]*dim;
     const grown=sproutOf(i), carried = grown<1 && NLW0[i]>0;
     if(carried){ const c=i*3, k=1-grown; r+=(NC0[c]-r)*k; g+=(NC0[c+1]-g)*k; b+=(NC0[c+2]-b)*k;
                  wid+=(NLW0[i]-wid)*k; leafK+=(NLD0[i]-leafK)*k; }
@@ -3636,7 +3689,7 @@ function emitNode(i, pass, w){
      * real seconds and each owes ECORATE ecology steps, so the ecology runs at
      * about 190 ticks a second whatever the time-lapse is set to, and `fadein`
      * is therefore in real time as well as in ticks. */
-    const al=Math.min(1, PARAMS.alpha*varyO(i)*STYLE.alpha)*PAINT[3];
+    const al=Math.min(1, PARAMS.alpha*varyO(i)*STYLE.alpha)*PAINT[3]*(de<0.9 ? 1 : (1-de)/0.1);
 
     /* the branch back to the parent: an ellipse lying along the step, centred
        between the two, so a body reads as connected structure rather than as a
@@ -3648,7 +3701,7 @@ function emitNode(i, pass, w){
        straight line four branches long. Past what a branch could be it is
        not a wound any more, it has torn, and it is not drawn. */
     let torn=false;
-    if(pass===0 && par>=0 && NDYING[i] && !NDYING[par]){
+    if(false && pass===0 && par>=0 && NDYING[i] && !NDYING[par]){
       const ex=NX[i]-NX[par], ey=NY[i]-NY[par], m=PARAMS.step*PARAMS.sphi*1.6;
       torn = ex*ex+ey*ey > m*m;
     }
@@ -3659,7 +3712,7 @@ function emitNode(i, pass, w){
       let t1x=ux*L, t1y=uy*L, t2x=t1x, t2y=t1y;
       /* a limb frozen in dying, hanging off a plant that has moved on: the
          stretched link is the wound, and it is straight */
-      const wound = NDYING[i] && !NDYING[par];
+      const wound = false;        /* a dying limb moves with its plant now; its first link is a branch like any other */
       if(!wound && PARAMS.curve>0){
         if(rooted(par)){
           const gp=NPAR[par];
@@ -3706,20 +3759,51 @@ function emitNode(i, pass, w){
           }
           const gc=sproutOf(c);
           if(gc<1){ t2x=mx+(t2x-mx)*gc; t2y=my+(t2y-my)*gc; }
+          /* and back to the tip's arc as that child withdraws, so the end does
+             not change shape in the frame the child is freed */
+          if(NDYING[c]){ const ec=dyingE(c); if(ec>0){ t2x+=(mx-t2x)*ec; t2y+=(my-t2y)*ec; } }
         }
       }
       /* the line that continues the parent's own branch starts at the
          parent's width and thins to its own; a side branch starts at its own */
-      const base=PARAMS.stem*varyS(i)*STYLE.stem*NSTEP[i]*0.7;
-      const w2=base*widthOf(NDESC[i]);
-      const w1=base*widthOf(contOf(par)===i ? NDESC[par] : NDESC[i]+1);
+      /* A minimum every branch has, and on top of it what the dial gives for
+         the load carried. The dial used to scale the whole of it, tip and
+         trunk alike, so a thick trunk meant thick twigs and a trunk was only
+         three times its tips. Now it is the base that thickens: a branch
+         tapers to the minimum at its end whatever it is at its root (Don,
+         2026-10-03). At the default dial this is what it was. */
+      /* And what it thickens WITH is how far the branch still has to run, not
+         how many nodes hang from it. The count hardly changes along a run and
+         drops at every fork, so a limb was lengths of one thickness with a
+         step between them. The distance out to the farthest tip falls by one
+         segment at every node, runs unbroken down the main line through a
+         fork, and is nothing at the tip, so a branch is a cone from its root
+         to its end and every segment tapers along itself (Don, 2026-10-03).
+         A side branch starts at its own width; the continuing one starts at
+         its parent's. */
+      /* EXPONENTIALLY, along the plant's own length (Don, 2026-10-03): the
+         root's thickness is set by how long the plant is, and a point has
+         the share of it that taperF gives for how far it is from the tip.
+         So the ends are fine for most of their length and the thickness is
+         at the base: a thick trunk and delicate branches. Sized by the
+         world's step and not the node's, or two segments of different
+         lengths met at different widths. */
+      const thin=PARAMS.thin*PARAMS.step, pr=PROOT[i];
+      const R=Math.max(NRD[pr>=0 ? pr : i], PARAMS.step), Rs=R/PARAMS.step;
+      const top=PARAMS.stem*varyS(i)*STYLE.stem*PARAMS.step*0.7*TAPER*Math.sqrt(Rs*Math.sqrt(Rs));
+      const w2=thin+top*taperF(NRD[i]/R);
+      const w1=thin+top*taperF((contOf(par)===i ? NRD[par] : NRD[i]+NSTEP[i])/R);
       const s=i*8;
       NSG[s]=px; NSG[s+1]=py; NSG[s+2]=t1x; NSG[s+3]=t1y; NSG[s+4]=t2x; NSG[s+5]=t2y; NSG[s+6]=w1; NSG[s+7]=w2;
       IBUF[w+I_A]=px;  IBUF[w+I_A+1]=py;
       IBUF[w+I_B]=cx;  IBUF[w+I_B+1]=cy;
-      IBUF[w+I_C]=t1x; IBUF[w+I_C+1]=t1y;
-      IBUF[w+I_D]=t2x; IBUF[w+I_D+1]=t2y;
-      IBUF[w+I_W]=w1;  IBUF[w+I_W+1]=w2;
+      IBUF[w+I_C]=t1x*keep; IBUF[w+I_C+1]=t1y*keep;
+      IBUF[w+I_D]=t2x*keep; IBUF[w+I_D+1]=t2y*keep;
+      IBUF[w+I_W]=w1;  IBUF[w+I_W+1]= contOf(i)<0 ? -w2 : w2;       /* a tip's end is round */
+      { paintCached(par);
+        const sd=PARAMS.stemdark;
+        const c0=packCol(Math.min(255,PAINT[0]*sd)/255, Math.min(255,PAINT[1]*sd)/255, Math.min(255,PAINT[2]*sd)/255);
+        IBUF[w+I_C0]= contOf(par)!==i ? -c0 : c0; }                    /* and a side branch's start */
       /* A branch belongs to the child and is drawn in the child's colour, so
          when its parent goes the branch goes with it — and freeing the parent
          used to take the whole fan of them in one frame. The child fades its
@@ -3739,8 +3823,8 @@ function emitNode(i, pass, w){
 
     if(pass===1 && twigOf(i)){
       drawPos(i); const x=DP[0], y=DP[1], d=PARAMS.stemdark;
-      w = writeTwig(w, x, y, TW, 1, Math.min(255,r*d)/255, Math.min(255,g*d)/255, Math.min(255,b*d)/255, al);
-      w = writeLeaf(w, x+TW[0], y+TW[1], i, TW[7], TW[8], TW[9], TW[10], r, g, b, al);
+      w = writeTwig(w, x, y, TW, keep, Math.min(255,r*d)/255, Math.min(255,g*d)/255, Math.min(255,b*d)/255, al);
+      w = writeLeaf(w, x+TW[0]*keep, y+TW[1]*keep, i, TW[7]*keep, TW[8], TW[9], TW[10], r, g, b, al);
     }
     if(pass===0 || !(leafOn || carried) || PARAMS.tipleaf<=0) return w;
     drawPos(i);
@@ -3813,7 +3897,7 @@ const LEAF0 = (MAXINST>>1)*INST;
 
 function beginInstances(){
   let w=0;
-  paintFor = -1;
+  paintFor = -1; BUILD++;
   sampleSeason(); sampleStyle();
   const WLIM=(MAXINST-2)*INST;
   const _g0 = performance.now();
@@ -4193,7 +4277,7 @@ function addNode(x,y,hx,hy,src,par,amt,stepUsed){
      right after this returns, beside NANG. The reach of every ancestor grows
      to include the new tip, walking up only as far as it still changes
      anything — a sibling branch already longer stops the walk. */
-  NLA[i]=0; NW[i]=0; NWT[i]=0; NVX[i]=0; NVY[i]=0; NMT[i]=ptick; NPH[i]=0; NREACH[i]=0; NDESC[i]=0; NCX[i]=NX[i]; NCY[i]=NY[i]; NCR[i]=PROOT[i];
+  NLA[i]=0; NW[i]=0; NWT[i]=0; NVX[i]=0; NVY[i]=0; NMT[i]=ptick; NPH[i]=0; NREACH[i]=0; NRD[i]=0; NDESC[i]=0; NCX[i]=NX[i]; NCY[i]=NY[i]; NCR[i]=PROOT[i];
   if(par>=0){
     let c=i, a=par;
     for(;;){
@@ -4232,12 +4316,13 @@ function freeNode(i){
     const wasWood = NLIVE[j]===2;
     if(wasWood) woodN--;
     else if(NLIVE[j]===1){ CCOUNT[NCC[j]]--; freeGround(NX[j],NY[j]); }
-    ghost(j);
+    if(!NDYING[j]) ghost(j);          /* what withdrew alive has nothing left to show */
     NLIVE[j]=0; NONF[j]=0; debin(j, wasWood); PFREE[freeN++]=j;
     if(par<0) break;
     if(NLK[par]===1) NTWO[par]=twigOpen(par);
     if(--NLK[par] > 0) break;
     NLKAT[par]=ptick;                       /* a tip again: see leafLook */
+    if(NDYING[par]) break;         /* still withdrawing: released on its own clock */
     if(NLIVE[par]!==2) break;      /* a living parent simply loses a child */
     j = par;                       /* wood with nothing left to hold: let go */
   }
@@ -4281,10 +4366,11 @@ function killNode(i){
    a rolling cursor, the way the terrain is rebuilt, rather than scanning every
    node every tick. */
 function reap(){
+  releaseDying();
   const slice = Math.max(256, (nodeHigh/9)|0);
   for(let n=0;n<slice;n++){
     const i = reapCursor++; if(reapCursor>=nodeHigh) reapCursor=0;
-    if(NLIVE[i]===0) continue;
+    if(NLIVE[i]===0 || NDYING[i]) continue;      /* the dying have their own clock: releaseDying */
     if(NLIVE[i]===2){
       /* Wood about to rot through. If what hangs beyond it is the SMALLER part
          of the plant it is drawn in now, while the wood is still there to be
@@ -4458,6 +4544,73 @@ const BTRY=new Int32Array(PMAX), BSELF=new Int32Array(PMAX);
    whole time, NTAN what the dying part hangs from, if anything living. */
 const NH=new Float32Array(PMAX), NT0=new Float32Array(PMAX), NT1=new Float32Array(PMAX), NTT=new Float32Array(PMAX);
 const NTAT=new Int32Array(PMAX).fill(-1), NTAN=new Int32Array(PMAX);
+/* ---- dying is withdrawing, and it goes on moving ----
+   What is going — a plant cleared whole, a limb cut, the part beyond rotting
+   wood — is no longer removed and replayed as ghosts. It STAYS in the plant:
+   still read, still swayed by the same joints, so it moves exactly as it did
+   (Don, 2026-10-03). It buds no more, counts for nothing, neither cuts nor is
+   cut, and is DRAWN withdrawing on the schedule below, each node pulled back
+   along its branch into its parent as that parent moves, its leaf closing and
+   its colour dimming. A node is freed when it has fully withdrawn (NDIEAT),
+   tips first, so nothing is on the screen when it goes.
+   Ghosts were frozen records made to move convincingly, and every way they
+   failed to was a jerk at the death: they stopped swinging, then stopped
+   turning with their anchor, and a whole plant, which hangs from nothing,
+   stopped dead before it withdrew. They remain for a node that dies alone. */
+const NDIEAT=new Int32Array(PMAX); let DYL=new Int32Array(1024), dyN=0;
+/* whether it was a tip when it began to go: only those keep a leaf. A node
+   becomes a tip when its children have withdrawn into it, and would have
+   grown a leaf on its way out */
+const NDTIP=new Uint8Array(PMAX);
+function dyingE(i){
+  if(!NDYING[i]) return 0;
+  const age=ptick-NTAT[i], T=NTT[i];
+  if(age<=0 || !(T>0)) return 0;
+  const u = age>=T ? 1 : age/T, clock=T*u*u*(3-2*u);
+  const e=(clock-NT0[i])/Math.max(1e-6, NT1[i]-NT0[i]);
+  return e<0 ? 0 : (e>1 ? 1 : e);
+}
+/* mark what scheduleRewind has just scheduled; returns how many were living */
+function markDying(L, n){
+  let lost=0;
+  if(dyN+n>DYL.length){ const b=new Int32Array((dyN+n)*2); b.set(DYL.subarray(0,dyN)); DYL=b; }
+  for(let k=0;k<n;k++){
+    const j=L[k];
+    if(NLIVE[j]===1) lost++;
+    NDTIP[j]= NLK[j]===0 ? 1 : 0;
+    NDYING[j]=1; NKID[j]=NCAP[j];
+    /* the tick its window closes: where the eased clock reaches t1 */
+    const T=NTT[j], t1=NT1[j];
+    let lo=0, hi=1;
+    for(let q=0;q<18;q++){ const m=(lo+hi)*0.5; if(T*m*m*(3-2*m) < t1) lo=m; else hi=m; }
+    const span=Math.ceil(hi*T)+1;
+    NDIEAT[j]=ptick+span;
+    /* and it must not die of age, or rot through, before then */
+    const need=(ptick-NBORN[j])+span+FADE+60;
+    if(NLIFE[j]<need) NLIFE[j]=need;
+    DYL[dyN++]=tag(j);
+  }
+  plantsDirty=true;
+  return lost;
+}
+/* free what has finished withdrawing: latest marked first, which is children
+   before their parents */
+function releaseDying(){
+  if(dyN===0) return;
+  if(DYK.length<DYL.length) DYK=new Int32Array(DYL.length);
+  let w=0;
+  for(let k=dyN-1;k>=0;k--){
+    const v=DYL[k], j=v%PMAX;
+    if(!same(v,j) || NLIVE[j]===0 || !NDYING[j]) continue;      /* gone some other way */
+    if(ptick>=NDIEAT[j] && NLK[j]===0){ if(NLIVE[j]===1) killNode(j); else freeNode(j); continue; }
+    DYK[w++]=v;
+  }
+  /* kept, in the order they were marked */
+  if(DYK.length<DYL.length) DYK=new Int32Array(DYL.length);
+  for(let k=0;k<w;k++) DYL[k]=DYK[w-1-k];
+  dyN=w;
+}
+let DYK=new Int32Array(1024);
 let RWL=new Int32Array(4096);
 const segLen = j => { const p=NPAR[j]; return Math.hypot(NX[j]-NX[p], NY[j]-NY[p]); };
 /* L[0..n) are the dying nodes, PARENTS BEFORE CHILDREN; top is the one the
@@ -4486,7 +4639,7 @@ function scheduleDoomedBodies(){
   let n=0;
   if(RWL.length<nodeHigh) RWL=new Int32Array(nodeHigh*2);
   for(let i=0;i<nodeHigh;i++){
-    if(NLIVE[i]===0) continue;
+    if(NLIVE[i]===0 || NDYING[i]) continue;      /* what is already going keeps its own schedule */
     const r=PROOT[i]; if(r<0) continue;
     if(BDOOM[r] || Math.abs(NX[r])>AX || Math.abs(NY[r])>AY) RWL[n++]=i;
   }
@@ -4499,6 +4652,10 @@ function scheduleDoomedBodies(){
     /* the body's own root is first only if it still stands; if the top of
        the list has a parent outside it, treat it as the top all the same */
     scheduleRewind(L.subarray(a,b), b-a, RETALL, -1);
+    { const edge = Math.abs(NX[r])>AX || Math.abs(NY[r])>AY;
+      const why = BDOOM[r]===1 ? 'oldest' : BDOOM[r]===2 ? 'debris' : BDOOM[r]===3 ? 'piece' : edge ? 'edge' : 'cleared';
+      if(!DSEEN.has(r)){ DSEEN.set(r,1); dlog(why, PSIZE[r], ptick-BFOUND[r]); } }
+    markDying(L.subarray(a,b), b-a);
     a=b;
   }
 }
@@ -5090,7 +5247,7 @@ function wrapAngle(a){
    The load below it stiffens it, linearly to nothing at `freeze` standing
    descendants, and the lever below it caps it. A root does not turn. */
 function setTurn(i){
-  if(PARAMS.sway<=0 || NLIVE[i]!==1 || NDYING[i] || !rooted(i)){ NWT[i]=0; return; }
+  if(PARAMS.sway<=0 || NLIVE[i]!==1 || !rooted(i)){ NWT[i]=0; return; }   /* the dying turn as the living do */
   const free = 1 - NDESC[i]/Math.max(1,PARAMS.freeze);
   if(free<=0){ NWT[i]=0; return; }
   let w = PARAMS.sway*Math.tanh(OUTV[O_TURN]*0.25)*free;
@@ -5158,6 +5315,7 @@ function sever(i, why){
      2026-09-19). Collected parents first, scheduled, then freed tips first,
      so that each node is a leaf when its turn comes and goes straight to a
      ghost instead of turning to wood on the way. */
+  if(NDYING[i]) return 0;                       /* already going */
   if(RWL.length<nodeHigh) RWL=new Int32Array(nodeHigh*2);
   let n=0, sn=0, lost=0;
   sevStamp++;
@@ -5168,7 +5326,7 @@ function sever(i, why){
     /* the child lists are as old as the last movement step, and a slot freed
        since may belong to a stranger now: believe a link only if it is still
        a link */
-    if(NLIVE[j]===0 || !rooted(j) || SEVMARK[NPAR[j]]!==sevStamp) continue;
+    if(NLIVE[j]===0 || NDYING[j] || !rooted(j) || SEVMARK[NPAR[j]]!==sevStamp) continue;
     SEVMARK[j]=sevStamp; RWL[n++]=j;
     for(let k=COFF[j];k<COFF[j+1];k++) MSTK[sn++]=CHILD[k];
   }
@@ -5176,10 +5334,7 @@ function sever(i, why){
   /* a stack gives parents before children but not in depth order, which is
      all scheduleRewind asks: a node's parent is always earlier in the list */
   scheduleRewind(RWL.subarray(0,n), n, RETCUT, rooted(i) ? NPAR[i] : -1);
-  for(let k=n-1;k>=0;k--){
-    const j=RWL[k];
-    if(NLIVE[j]===1){ lost++; killNode(j); }
-  }
+  lost = markDying(RWL.subarray(0,n), n);
   severed+=lost;
   /* with how deep the wound was and how big the body, so a plant felled at
      the root can be told from one that lost a twig */
@@ -5240,7 +5395,7 @@ function* movePlants(){
     /* a root does not turn: it is the one joint with nothing to lean
        against, and a fixed root on a swivel is a bearing */
     let sn=0, vn=0;
-    NDESC[r]=0; NV[r]=0;
+    NDESC[r]=0; NV[r]=0; NRD[r]=0;
     for(let k=COFF[r];k<COFF[r+1];k++) MSTK[sn++]=CHILD[k];
     while(sn>0){
       const c=MSTK[--sn], par=NPAR[c];
@@ -5249,7 +5404,7 @@ function* movePlants(){
          on without it: a limb retracting in mid-air, joined to nothing (Don,
          2026-09-19). It rides its plant now like any other node; setTurn is
          what keeps it from swinging on its own account. */
-      VIS[vn++]=c; NDESC[c]=0;
+      VIS[vn++]=c; NDESC[c]=0; NRD[c]=0;
       NW[c] += (NWT[c]-NW[c])*wk;
       if(NW[c]!==0){
         /* advance the phase; the lean follows a sine of it, so the joint
@@ -5275,7 +5430,7 @@ function* movePlants(){
     }
     /* the load each joint carries: children were visited after their
        parents, so walking the visit order backwards sums the subtree */
-    while(vn>0){ const c=VIS[--vn]; NDESC[NPAR[c]] += NDESC[c]+1; }
+    while(vn>0){ const c=VIS[--vn], p=NPAR[c]; NDESC[p] += NDESC[c]+1; const far=NRD[c]+NSTEP[c]; if(far>NRD[p]) NRD[p]=far; }
     /* between bodies and never inside one: a plant is drawn all moved or
        not at all, and its loads are whole */
     if(sliceOver()){ plantsDirty=true; yield; }
@@ -5304,13 +5459,13 @@ function* movePlants(){
   const r2=(1.1*PCELL)*(1.1*PCELL), eps2=(0.1*PCELL)*(0.1*PCELL);
   for(let i=0;i<nodeHigh;i++){
     if((i&255)===255 && sliceOver()) yield;
-    if(NLIVE[i]!==1) continue;
+    if(NLIVE[i]!==1 || NDYING[i]) continue;     /* what is going strikes nothing */
     const mx=NX[i]-NCX[i], my=NY[i]-NCY[i];
     if(mx*mx+my*my < eps2 && NCR[i]===PROOT[i]) continue;
     const ox=NCX[i], oy=NCY[i];
     NCX[i]=NX[i]; NCY[i]=NY[i]; NCR[i]=PROOT[i]; moveChecks++;
     const t = nearestFoe(NX[i], NY[i], PROOT[i], i, 1, r2, ox, oy);
-    if(t>=0){
+    if(t>=0 && !NDYING[t]){                     /* and is not struck */
       collisions++;
       /* The core is hard. A node within `core` generations of its body's
          root cuts whatever touches it, however fast that was moving; speed
@@ -5791,6 +5946,7 @@ layout(location=3) in vec2 aC;
 layout(location=4) in vec2 aD;
 layout(location=5) in vec2 aW;
 layout(location=6) in vec4 aCol;
+layout(location=7) in float aC0;      /* a branch's starting colour, packed; its sign caps the start */
 /* 1/AX and 1/AY. The viewport is already the arena's 16:9 rectangle, so this
    is the whole of the projection — and because the viewport's aspect and the
    arena's are the same number, a circle of arc stays a circle on the glass.
@@ -5798,10 +5954,11 @@ layout(location=6) in vec4 aCol;
    fade to hide what the bound did. A plane needs a divide. */
 uniform vec2 uInv;
 uniform float uPx;                    /* one pixel, in arena units */
-out vec2 vC; out vec4 vCol; flat out float vKind; flat out float vShape; flat out float vStalk;
+out vec2 vC; out vec4 vCol; flat out float vKind; flat out float vShape; flat out float vStalk; out float vCap;
 void main(){
-  float t=aUV.x, s=aUV.y;
-  vCol = aCol;
+  float tr=aUV.x, s=aUV.y;
+  float t=clamp(tr, 0.0, 1.0);
+  vCol = aCol; vCap = 0.0;
   vec2 p;
   if(aW.x < 0.0){
     /* a leaf: the strip is simply a quad with more triangles in it */
@@ -5825,16 +5982,27 @@ void main(){
     /* Band-limited against the pixel. A ribbon thinner than a pixel is
        drawn a pixel wide and that much fainter, so a twig dims instead of
        breaking up into dashes as it crosses the grid. */
-    float wd = mix(aW.x, aW.y, t);
+    float wd = mix(aW.x, abs(aW.y), t);
     float ww = max(wd, 0.6*uPx);
     vCol.a *= wd/ww;
     p = q + vec2(-d.y, d.x)*(s*ww);
+    /* the cap rows: pushed out past the end by the half-width where that end
+       is capped, and left on the end row where it is not */
+    if(tr < 0.0 && aC0 < 0.0){ p -= d*ww; vCap = 1.0; }
+    if(tr > 1.0 && aW.y < 0.0){ p += d*ww; vCap = 1.0; }
+    /* from its parent's colour to its own */
+    float pk = abs(aC0) - 1.0;
+    if(pk >= 0.0){
+      float cb = floor(pk/65536.0); pk -= cb*65536.0;
+      float cg = floor(pk/256.0);   float cr = pk - cg*256.0;
+      vCol.rgb = mix(vec3(cr, cg, cb)/255.0, aCol.rgb, t);
+    }
     vC = vec2(2.0*t-1.0, s); vKind = 1.0; vShape = 0.0; vStalk = 1.0;
   }
   gl_Position = vec4(p*uInv, 0.0, 1.0);
 }`, `#version 300 es
 precision highp float;
-in vec2 vC; in vec4 vCol; flat in float vKind; flat in float vShape; flat in float vStalk;
+in vec2 vC; in vec4 vCol; flat in float vKind; flat in float vShape; flat in float vStalk; in float vCap;
 /* set by leafQ when the point is on the leaf's stalk and not its blade, so
    main can paint it as branch */
 float gStalk = 0.0;
@@ -6001,7 +6169,7 @@ float leafQ(vec2 p, float s){
 }
 void main(){
   /* a leaf is a disc; a branch is soft across itself and whole along */
-  float q = vKind > 0.5 ? abs(vC.y) : leafQ(vC, vShape);
+  float q = vKind > 0.5 ? length(vec2(vC.y, vCap)) : leafQ(vC, vShape);
   /* ascending, always: a descending smoothstep is undefined and vanishes on
      some drivers */
   float a = (1.0 - smoothstep(1.0-uSoft, 1.0, q))*vCol.a;
@@ -6015,15 +6183,17 @@ const quadVBO=gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER,quadVBO);
 /* a strip of RIB segments: (t, side) pairs down its length */
 const RIB = 8;
-{ const v=new Float32Array((RIB+1)*4);
-  for(let k=0;k<=RIB;k++){ v[k*4]=k/RIB; v[k*4+1]=-1; v[k*4+2]=k/RIB; v[k*4+3]=1; }
+/* with a row before the start (t = -1) and one after the end (t = 2): the
+   round caps, which a leaf and an uncapped end fold flat */
+{ const v=new Float32Array((RIB+3)*4);
+  for(let k=-1;k<=RIB+1;k++){ const t = k<0 ? -1 : (k>RIB ? 2 : k/RIB), o=(k+1)*4; v[o]=t; v[o+1]=-1; v[o+2]=t; v[o+3]=1; }
   gl.bufferData(gl.ARRAY_BUFFER,v,gl.STATIC_DRAW); }
 gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
 const instVBO=gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER,instVBO);
 gl.bufferData(gl.ARRAY_BUFFER,MAXINST*INST*4,gl.DYNAMIC_DRAW);
 const STRIDE=INST*4;
-[[1,2,I_A*4],[2,2,I_B*4],[3,2,I_C*4],[4,2,I_D*4],[5,2,I_W*4],[6,4,I_COL*4]].forEach(a=>{
+[[1,2,I_A*4],[2,2,I_B*4],[3,2,I_C*4],[4,2,I_D*4],[5,2,I_W*4],[6,4,I_COL*4],[7,1,I_C0*4]].forEach(a=>{
   gl.enableVertexAttribArray(a[0]);
   gl.vertexAttribPointer(a[0],a[1],gl.FLOAT,false,STRIDE,a[2]);
   gl.vertexAttribDivisor(a[0],1);
@@ -6131,7 +6301,7 @@ function renderPlants(){
     gl.uniform2f(plantProg.u.uInv, 1/AX, 1/AY);
     gl.uniform1f(plantProg.u.uPx, 2*AX/Math.max(1,VW));
     gl.bindVertexArray(plantVAO);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,(RIB+1)*2,instN);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,(RIB+3)*2,instN);
     gl.bindVertexArray(null);
   }
   PERF.draw += performance.now()-_d0;
@@ -6989,8 +7159,8 @@ const SETTINGS = [
   why:"How small a leaf is when it is born and how large it grows. A leaf starts at the small end, reaches the large end about two thirds of the way through its life, then darkens and drops, leaving bare branch for the last fifth. Big leaves cover the ground and hide the branching underneath; small ones let the structure show through.",
   fmt:(a,b)=>(a<=0?"none":a.toFixed(2))+" to "+b.toFixed(2)},
  {key:"stem", name:"Branch thickness", min:0, max:0.3, step:0.01,
-  lo:"invisible", hi:"skeletal",
-  why:"How thick branches are between leaves. Very thin branches disappear, displaying plants as a scatter of disconnected leaves. Thick branches emphasize the plant's structure as the primary visual.",
+  lo:"invisible", hi:"massive trunks",
+  why:"How thick a branch grows with what it carries. It thickens the base of a plant: every branch still tapers to a fine tip, and twigs stay thin however massive the trunk. At zero, branches are not drawn at all.",
   fmt:v=>v===0?"none":v.toFixed(2)},
  {key:"layers", name:"Branches over leaves", choice:[
     {label:"Plant by plant", why:"each plant is drawn whole, branches and leaves together", set:{layers:0}},
@@ -10270,7 +10440,7 @@ window.__world = {
      not an exclusion one. This separates them. */
   overlapScan(){
     const r = PARAMS.collide*PARAMS.step, r2 = r*r;
-    let pairs=0, own=0, kin=0, hardPairs=0, worst=0, live=0, sampled=0;
+    let pairs=0, own=0, kin=0, hardPairs=0, dying=0, worst=0, live=0, sampled=0;
     for(let i=0;i<nodeHigh;i++){
       if(NLIVE[i]!==1) continue;
       live++;
@@ -10290,6 +10460,9 @@ window.__world = {
           const d2=dx*dx+dy*dy;
           if(d2 < r2*0.9801){                /* 1% tolerance for float noise */
             if(PROOT[q]===PROOT[i]){ own++; continue; }
+            /* what is withdrawing neither cuts nor is cut, and swings through
+               its neighbours on its way out: counted, not a violation */
+            if(NDYING[q] || NDYING[i]){ dying++; continue; }
             /* pieces of one plant that were folded through each other when
                it split stand in a truce until they part; only a split makes
                such a pair, so it is always one lineage */
@@ -10303,7 +10476,7 @@ window.__world = {
         }
       }
     }
-    return { live, sampled, tooClosePairs:pairs, ownPairs:own, kinPairs:kin, hardPairs,
+    return { live, sampled, tooClosePairs:pairs, ownPairs:own, kinPairs:kin, hardPairs, dyingPairs:dying,
              worstOverlapPct:+(100*worst).toFixed(1),
              radius:+r.toFixed(5),
              /* how wide the paint is next to how far apart the nodes are: if
