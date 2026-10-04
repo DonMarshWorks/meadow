@@ -7255,6 +7255,21 @@ let perfT0 = 0;
    which of its keys reach a page at all is not known until it is tried, which
    is why the overlay's last line says what key arrived. */
 let perfOn = PARAMS.perf>0, lastKey = "none yet";
+/* Which browser this is, for a screen with no console: a streaming device's
+   browser is told from a desktop's by this string and nothing else, and the
+   only way to read it off a television is to print it (Don, 2026-10-03).
+   Broken into lines the overlay can hold. And what the pointer last did,
+   because a remote's arrows may arrive as a mouse and not as keys. */
+const UALINES = (() => {
+  const ua = String(navigator.userAgent || "unknown"), out = [];
+  for(let k=0;k<ua.length;k+=58) out.push((k===0 ? "agent  " : "       ")+ua.slice(k, k+58));
+  out.push("screen "+screen.width+"x"+screen.height+"  dpr "+(window.devicePixelRatio||1)+"  touch "+(navigator.maxTouchPoints||0));
+  return out.join("\n");
+})();
+let lastPtr = "none yet";
+["pointerdown","pointermove"].forEach(t => addEventListener(t, e => {
+  lastPtr = t.slice(7)+"  "+(e.pointerType||"-")+"  "+Math.round(e.clientX)+","+Math.round(e.clientY);
+}, {passive:true, capture:true}));
 const perfPrev = [0,0,0];
 function setPerf(v){
   perfOn = !!v; perfT0 = 0;
@@ -7326,6 +7341,8 @@ function showPerf(now){
     "nodes  "+liveN+" live  "+woodN+" wood  "+comps+" plants",
     GLINFO,
     "key    "+lastKey,
+    "ptr    "+lastPtr,
+    UALINES,
     /* the year and the drift, as the last build sampled them: the season,
        how far through it, and each walk's multiplier with where it is going */
     seasonLine(),
