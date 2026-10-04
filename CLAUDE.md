@@ -699,7 +699,8 @@ from; the ones marked **[here]** were found in this codebase.
 - **Nothing is reserved.** The selection highlight is a lift toward white.
   (Red was the highlight and magenta the size ring; both went 2026-09-17.)
 - **Seasons, variation and style drift are paint only, on the wall clock**
-  (2026-09-23), so seed 7 is the same world in any season on any machine.
+  (2026-09-23), so seed 7 is the same world in any season on any machine
+  (a season now also sets how fast that world is played; see below).
   Seasons (`seasonAt`): every hue shifted the same way, saturation and
   lightness stretched, the drawn leaf scaled; the year starts where the seed
   says and each season holds a plateau for three fifths of its length. Fall
@@ -714,6 +715,56 @@ from; the ones marked **[here]** were found in this codebase.
   seconds apart differ by design, so `instHash` proves equality only with the
   clocks pinned (`seasonat`, `styleat`) or the features off, and verify and
   sweep pin `seasons=0&style=0`.
+- **The seasons are told apart at a glance (2026-10-03, Don).** Six things,
+  none of which reaches the simulation's rules.
+  *Color:* fall goes 0.92 of the way to its colors, not a third — warm hues to
+  red, greens to gold and amber by where they stood, blues to russet; summer
+  pulls 0.45 toward green; spring is lighter; winter darker. Each season's
+  shift is computed on its own (`seasonShift`) and the two are BLENDED. Blending
+  the target hue and taking the short way to it flipped direction for a plant
+  opposite the target as it moved, and the whole plant changed color in one
+  build; it was always there and only showed once the pull was strong.
+  *Winter by leaf:* `DECID`, by shape, is how much of winter's small, dark and
+  grey a plant takes — maple, oak and chestnut all of it (leaf 0.35), needles
+  and wheat almost none.
+  *Ground:* the photograph is tinted toward a season color at its own
+  brightness (`uTint`), brightened or dimmed, and in winter dusted with snow
+  where it is light and where a blurred, enlarged sample of itself is
+  (`uSnow`, set against the photograph's mean brightness, `bgLum`). Nothing
+  when `bg` is 0.
+  *Flowers, fruit, holly (`emitBloom`, `bloomQ`; `flowers=0`, `bloom`):*
+  spring flowers, fruit from midsummer into early fall, red berries on one
+  plant in three through winter. Which nodes: hashed from the slot and birth
+  tick. What they look like: hashed from the plant's tone, so a family shares
+  them and `prnd` is untouched. Variety is parametric, not a list — petal
+  count, outline, notch, gap depth, eye, second whorl, two colors, size; fruit
+  is a layout (cluster, raceme, pair on stalks, one long), a count, two colors.
+  Leaf instances of shape 20 and 21, the description packed in `I_C0` and the
+  second color in `W.y`; the one arctangent per fragment in the program, paid
+  only by flowers. Each plant is early or late, each node opens at its own
+  point of the ramp, so nothing arrives at size. Only while the year turns.
+  Fruit hangs FROM its branch: it points away from it and is set out so the
+  start of its stalks is on the node (at random angles a pair on stalks was a
+  V joined to nothing). And a berry is a ball: its highlight is fixed on the
+  SCREEN (`vDir` undoes the bunch's direction), or it swung round the berry as
+  the branch swayed and read as a flat disc turning. Flowers are flat and keep
+  a fixed angle.
+  `MAXINST` is four per node for it.
+  *Pace (`SEASON.pace`):* the world runs 1.2 of its ticks a second in spring
+  and summer, 0.6 in fall, 0.15 in winter. Pacing only: the same ticks in the
+  same order, so growth, ageing and sway slow together and seed 7 is still the
+  same world. Don chose this over separate growth and motion dials inside the
+  simulation; slowing growth alone kills every plant a quarter into winter (a
+  node lives 3,250 ticks, a season is 14,400).
+  *Between ticks (`TFRAC`, `BFRAC`):* at 12 ticks a second on a 60-frame
+  screen everything drawn by the tick stood still for frames, so carry, leaf
+  roll and withdrawal read the fraction of a tick the frame loop owes. Sampled
+  once per build, zero outside one, so the simulation never sees it.
+  *Breeze (`breezeOf`):* since pace ties motion to growth, summer and fall get
+  a painted flutter of leaf direction on the wall clock. Its phase is read off
+  where the leaf is DRAWN, never its node, or a leaf handed to a new tip would
+  jump. With the year turning there is a new picture every frame.
+  The corner shows the season's name and nothing else.
 
 **Twelve leaf shapes** (lance, spade, heart, clover, needles, fern, aspen,
   wheat, dandelion, oak, maple, horse chestnut; shape 0, the plain disc, is retired but its number is
@@ -819,7 +870,10 @@ Open, none urgent:
 - **Each segment of a withdrawing branch starts at full speed** when the tip
   retracting into it arrives. Continuous at the visible tip, by design, but a
   twig leaf on that segment starts with it.
-- **`kids` per lineage**, blossoms and berries by season: asked for, deferred.
+- **`kids` per lineage**: asked for, deferred.
+- **The seasons' motion has not been probed**, only photographed: the breeze,
+  the drawing between ticks and flowers opening were never run through the
+  instance-identity probe. Don judges them by eye.
 - Branch-against-branch collision, a maximum age, and the slow fall in program
   diversity over long runs are older open threads.
 

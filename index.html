@@ -156,6 +156,10 @@
   .bar .val{font-size:11px;color:var(--ink);font-variant-numeric:tabular-nums;margin-bottom:5px}
   .scales{margin-top:15px;font-size:10px;letter-spacing:.13em;text-transform:uppercase;
     color:rgba(233,240,255,.56);font-variant-numeric:tabular-nums;line-height:1.85}
+  /* the season, and nothing else: large enough to read from across a room, and
+     shadowed because in winter the ground under it is snow */
+  #seasonname{font-size:32px;letter-spacing:.05em;color:rgba(233,240,255,.86);line-height:1.1;
+    text-shadow:0 1px 8px rgba(0,0,0,.8),0 0 2px rgba(0,0,0,.7)}
 
   /* Fixed and clipped: the page itself must never gain a scrollbar, and an
      overlay is the easiest way to give it one by accident. */
@@ -338,6 +342,7 @@
     .bar .lab{font-size:8.5px;letter-spacing:.05em}
     .bar .val{font-size:10px}
     .scales{font-size:9.5px;letter-spacing:.09em;margin-top:12px;line-height:1.75}
+    #seasonname{font-size:23px}
     .sp{padding:7px 12px;font-size:11px}
   }
 
@@ -710,8 +715,8 @@
   </div>
 
   <div class="corner bl">
+    <div id="seasonname"></div>
     <div class="scales" id="scales">
-      <div id="sc1"></div><div id="sc2"></div><div id="sc3"></div>
       <div id="selinfo"></div>
     </div>
   </div>
@@ -1378,6 +1383,10 @@ const PARAMS = {
   season:  3,       // minutes a season lasts, 1 to 10
   seasonat: -1,     // hold the year at a point, 0 to 4 (2.5 is the middle of
                     // fall), for a picture; -1 lets it turn
+  flowers: 1,       // flowers in spring, fruit in summer and early fall, holly
+                    // berries in winter: see emitBloom. Paint only, and only
+                    // while the year turns. 0 = none
+  bloom:   1,       // how large flowers and fruit are drawn, a multiplier
   styleat: -1,      // hold the style clock at a moment, in seconds, for a
                     // picture or a probe; -1 lets it drift
   sat:     0.60,    // how saturated the colours are, 0..1. 1 is as vivid as the
@@ -1634,7 +1643,7 @@ const LEAFFIT = [1, 1.12, 0.90, 0.74, 0.84, 1, 1, 0.84, 1, 1, 0.94, 1.08, 1.00];
 function leafLook(i){
   /* with a child on it a node has no leaf, at once: its first child took it */
   const dt=(ptick-NLKAT[i])/LEAFT, open = (NLK[i]>0 || (NDYING[i] && !NDTIP[i])) ? 0 : dt;
-  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*SEASON.leaf;
+  LEAF[3] = open<=0 ? 0 : (open>=1 ? 1 : open*open*(3-2*open))*seasonLeaf(i);
   if(LEAF[3]<=0){ LEAF[0]=0; LEAF[1]=1; LEAF[2]=0; return; }
   if(NLIVE[i]===2){
     const wf = WOODFADE>0 ? Math.min(1,(ptick-NWOODAT[i])/WOODFADE) : 1;
@@ -1703,7 +1712,7 @@ let MOVED_AT = 0;
 function leafRoll(i){
   const amt=PARAMS.roll;
   if(!(amt>0)){ ROLL[0]=1; ROLL[1]=1; return; }
-  const since=Math.min(Math.max(0, ptick-NMT[i]), Math.max(1, PARAMS.mstep|0));
+  const since=Math.min(Math.max(0, ptick-NMT[i]+BFRAC), Math.max(1, PARAMS.mstep|0));
   const c=Math.abs(Math.cos((NPH[i]+NW[i]*since)*0.5 + (Math.imul(i,2654435761)>>>0)*1.4629e-9));
   ROLL[0]=1-amt*(1-c); ROLL[1]=1-0.22*amt*(1-c);
 }
@@ -2007,9 +2016,18 @@ const NMT=new Int32Array(PMAX);
    where the next step puts it: since joint rates ease (turnease) the next
    move is the last one to within a few hundredths of a step. Drawing only;
    no lag. */
+/* ---- and between ticks ----
+   A winter world runs a dozen ticks a second and a fall one under fifty, on a
+   screen that draws sixty frames: everything carried, rolled or withdrawing
+   by the tick would stand still for frames at a time. TFRAC is how far the
+   frame loop has got toward the next tick, the fraction of one it owes;
+   BFRAC is that as the build in flight sampled it, once, so a sliced build is
+   one moment, and it is zero outside a build, so the simulation never reads
+   it. Drawing only. With no frame loop both are zero and nothing changes. */
+let TFRAC = 0, BFRAC = 0;
 function carryF(i){
   if(PARAMS.sway<=0) return 0;
-  const ms=Math.max(1,PARAMS.mstep|0), since=ptick-NMT[i];
+  const ms=Math.max(1,PARAMS.mstep|0), since=ptick-NMT[i]+BFRAC;
   return since<=0 ? 0 : (since>=ms ? 1 : since/ms);
 }
 const cX = i => NX[i]+NVX[i]*carryF(i), cY = i => NY[i]+NVY[i]*carryF(i);
@@ -2975,12 +2993,51 @@ function wheelDeg(h){
    SEASON is sampled ONCE per instance build (beginInstances), so a sliced
    build equals a whole one; the harnesses pin seasons=0 because two loads
    of one seed are otherwise minutes apart on the clock. */
+/* Made much stronger on 2026-10-03, at Don's asking: the seasons are to be
+   told apart at a glance. Fall goes most of the way to its colours and not a
+   third; summer pulls toward green; spring is lighter; winter is darker and
+   its leaves smaller, and how much of winter a plant takes depends on its
+   leaf (DECID). The ground turns as well: gr, gg, gb are what the photograph
+   is tinted toward, at the brightness it had, gk is how far, gain is how
+   bright, and snow is how much of it is dusted white.
+   pace is how fast the WORLD runs, as a share of its ticks a second: a
+   vigorous spring and summer, a slower fall, a winter all but stopped. It is
+   pacing and nothing else (Don's choice, 2026-10-03): the same ticks in the
+   same order, played slower, so growth, ageing and swaying slow together,
+   nothing dies of the cold, and seed 7 is still the same world. Slowing
+   growth alone would have killed every plant a quarter of the way into
+   winter, since a node lives 3,250 ticks and a season is 14,400.
+   breeze is a flutter of the leaves, painted: see breezeOf. */
 const SEASONS = [
-  {name:"spring", hue: 80, k:0.25, sat:0.80, light: 0.10, leaf:0.85},
-  {name:"summer", hue:120, k:0.30, sat:1.05, light: 0.00, leaf:1.00},
-  {name:"fall",   hue: 30, k:0.55, sat:1.05, light:-0.02, leaf:0.90},
-  {name:"winter", hue:215, k:0.20, sat:0.55, light:-0.14, leaf:0.55}];
-const SEASON = {t:1.5, name:"summer", hue:120, k:0, sat:1, light:0, leaf:1, fall:0};
+  {name:"spring", hue: 95, k:0.30, sat:0.85, light: 0.13, leaf:0.85, gr:0.55, gg:1.00, gb:0.35, gk:0.75, gain:2.10, snow:0, pace:1.20, breeze:0.30},
+  {name:"summer", hue:125, k:0.45, sat:1.10, light: 0.00, leaf:1.00, gr:0.80, gg:1.00, gb:0.70, gk:0.00, gain:1.00, snow:0, pace:1.20, breeze:0.80},
+  {name:"fall",   hue: 30, k:0.92, sat:1.45, light: 0.00, leaf:0.90, gr:1.00, gg:0.58, gb:0.26, gk:0.80, gain:1.35, snow:0, pace:0.60, breeze:1.00},
+  {name:"winter", hue:215, k:0.20, sat:0.45, light:-0.18, leaf:0.35, gr:0.78, gg:0.88, gb:1.00, gk:0.60, gain:0.80, snow:1, pace:0.15, breeze:0.10}];
+const SEASON_F = ["k","sat","light","leaf","gr","gg","gb","gk","gain","snow","pace","breeze"];
+const SEASON = {t:1.5, name:"summer", hue:120, k:0, sat:1, light:0, leaf:1, fall:0, winter:0,
+                gr:1, gg:1, gb:1, gk:0, gain:1, snow:0, pace:1, breeze:0, on:0};
+/* How much of winter a leaf shape takes, by shape number: the broad leaves of
+   trees nearly all of it, grasses and needles little. It weighs the season's
+   leaf scale, darkness and loss of colour, and only in winter. */
+const DECID = [1, 0.75, 0.75, 0.85, 0.50, 0.15, 0.40, 0.95, 0.25, 0.45, 1, 1, 1];
+function seasonTake(i){ return 1 - SEASON.winter*(1-DECID[NSHAPE[i]]); }
+function seasonLeaf(i){ return 1 + (SEASON.leaf-1)*seasonTake(i); }
+/* How far one season moves a hue, signed, and in SHIFTC how much of its colour
+   it loses on the way.
+   Fall is not a shift toward one hue. The short way from blue to orange runs
+   through violet, and the first fall was magenta and yellow (seed 7,
+   2026-09-23). A warm hue goes to red; anything cooler goes DOWN the wheel,
+   through green, to gold or amber or russet by where it stood, and the blues
+   lose some of their saturation on the way, which is what brown is. */
+let SHIFTC = 0;
+function seasonShift(si, h){
+  const S=SEASONS[si]; let dh; SHIFTC=0;
+  if(si===2){
+    if(h<=60 || h>=300){ dh=14-h; if(dh<-180) dh+=360; }
+    else { dh=(50-0.125*(h-60))-h; SHIFTC=Math.max(0, Math.min(1, (h-170)/90)); }
+  } else { dh=S.hue-h; if(dh>180) dh-=360; if(dh<-180) dh+=360; }
+  return dh*S.k;
+}
 const SEASON0 = ((SEED*0.6180339887)%1)*4;
 function seasonAt(t, o){
   const sm = u => u*u*(3-2*u);
@@ -2990,13 +3047,17 @@ function seasonAt(t, o){
   let dh = b.hue-a.hue; if(dh>180) dh-=360; if(dh<-180) dh+=360;
   o.t = t; o.name = a.name;
   o.hue = (a.hue + dh*w + 360)%360;
-  o.k = a.k+(b.k-a.k)*w; o.sat = a.sat+(b.sat-a.sat)*w;
-  o.light = a.light+(b.light-a.light)*w; o.leaf = a.leaf+(b.leaf-a.leaf)*w;
+  for(let f=0;f<SEASON_F.length;f++){ const key=SEASON_F[f]; o[key] = a[key]+(b[key]-a[key])*w; }
   o.fall = (a.name==="fall" ? 1-w : 0) + (b.name==="fall" ? w : 0);
+  o.winter = (a.name==="winter" ? 1-w : 0) + (b.name==="winter" ? w : 0);
+  o.ia = si; o.ib = u<0.2 ? (si+3)&3 : (si+1)&3; o.w = w;
+  o.on = 1;
   return o;
 }
 function sampleSeason(){
-  if(PARAMS.seasons<=0){ seasonAt(1.5, SEASON); SEASON.k=0; SEASON.sat=1; SEASON.light=0; SEASON.leaf=1; SEASON.fall=0; return; }
+  if(PARAMS.seasons<=0){
+    seasonAt(1.5, SEASON); SEASON.k=0; SEASON.sat=1; SEASON.light=0; SEASON.leaf=1; SEASON.fall=0;
+    SEASON.winter=0; SEASON.gk=0; SEASON.gain=1; SEASON.snow=0; SEASON.pace=1; SEASON.breeze=0; SEASON.on=0; return; }
   if(PARAMS.seasonat>=0){ seasonAt(PARAMS.seasonat%4, SEASON); return; }
   const per = Math.max(0.1, PARAMS.season)*60;
   seasonAt((SEASON0 + performance.now()/1000/per)%4, SEASON);
@@ -3058,30 +3119,28 @@ function styleTouch(key){
 }
 function nodeColour(i,out){
   let h = wheelDeg(NHUE[i] - hueOwed(i)), satx = 1;
-  if(SEASON.k>0){
-    let dh=SEASON.hue-h; if(dh>180) dh-=360; if(dh<-180) dh+=360;
-    /* Fall is not a shift toward one hue. The short way from blue to orange
-       runs through violet, and the first fall was magenta and yellow (seed
-       7, 2026-09-23). A warm hue goes to red-orange; anything cooler goes
-       DOWN the wheel, through green to yellow, and loses most of its
-       saturation on the way, which is what brown is. */
-    if(SEASON.fall>0){
-      let df, cool = 0;
-      if(h<=60 || h>=300){ df=20-h; if(df<-180) df+=360; }
-      else { df=45-h; cool=1; }
-      dh += (df-dh)*SEASON.fall;
-      satx = 1 - 0.45*cool*SEASON.fall;
-    }
-    h=(h+dh*SEASON.k+360)%360;
+  const take = seasonTake(i);
+  if(SEASON.on>0){
+    /* Each season's shift is worked out on its own and the two are blended,
+       so a colour is continuous through the year. Blending the TARGET hue and
+       then taking the short way to it changed direction for any plant that
+       stood opposite the target as it moved, and the whole plant changed
+       colour in one build (2026-10-03, seen once the pull was strong enough
+       to show: a violet plant blue in midsummer and magenta by its end). */
+    const w=SEASON.w, d0=seasonShift(SEASON.ia, h), c0=SHIFTC;
+    let d1=0, c1=0;
+    if(w>0){ d1=seasonShift(SEASON.ib, h); c1=SHIFTC; }
+    h=(h + d0*(1-w) + d1*w + 720)%360;
+    satx = 1 - 0.35*(c0*(1-w) + c1*w);
   }
   const turn = Math.min(1, Math.abs(NANG[i])/Math.max(1e-6, PARAMS.angmax*0.6));
   /* and the whole of it scaled by a taste dial: vivid is pretty and muted
      is lifelike, and which is wanted is the viewer's call. Read live. */
-  const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i]*SEASON.sat*STYLE.sat*satx)*Math.max(0, Math.min(1, PARAMS.sat));
+  const sat = Math.min(1, (0.22 + 0.68*turn)*NTS[i]*(1+(SEASON.sat-1)*take)*STYLE.sat*satx)*Math.max(0, Math.min(1, PARAMS.sat));
   /* Lightness is age: light at birth, darkening over the node's life, so
      the growing edge of a plant is bright and its old interior is deep. */
   const age = Math.min(1, (ptick-NBORN[i])/Math.max(1, lifeShown(i)));
-  const l = Math.max(0.12, Math.min(0.86, 0.64 - 0.32*age + NTL[i] + SEASON.light));
+  const l = Math.max(0.12, Math.min(0.86, 0.64 - 0.32*age + NTL[i] + SEASON.light*take));
   hslToRgb(h, sat, l, out);
 }
 
@@ -3320,7 +3379,7 @@ const widthOf = n => WTAB[n>4096?4096:n];
    buffer, bufferSubData was handed more than it could hold, and the entire
    draw failed — so the whole planet's vegetation blinked out for exactly one
    frame. Every loop below is bounded against it. */
-const MAXINST = PMAX*3 + GHOSTN*3;   /* branch, twig, leaf: a node is at most three */
+const MAXINST = PMAX*4 + GHOSTN*3;   /* branch, twig, leaf, and a flower or fruit */
 const IBUF = new Float32Array(MAXINST*INST);
 let instN = 0;
 
@@ -3678,14 +3737,154 @@ function twigOf(i){
   const t2x=(tx*TBEND_C-ty*cb)*L, t2y=(tx*cb+ty*TBEND_C)*L;
   TW[0]=tx*L; TW[1]=ty*L; TW[2]=t1x; TW[3]=t1y; TW[4]=t2x; TW[5]=t2y;
   TW[6]= PARAMS.stem>0 ? PARAMS.thin*PARAMS.step*0.8 : 0;   /* a twig is always thin; and gone when branches are */
-  TW[7]=leafW(size)*NSTEP[i]*NLSC[i]*open*close*SEASON.leaf;
+  TW[7]=leafW(size)*NSTEP[i]*NLSC[i]*open*close*seasonLeaf(i);
   TW[8]=dark;
   const tl=Math.sqrt(t2x*t2x+t2y*t2y)||1; TW[9]=t2x/tl; TW[10]=t2y/tl;
   return TW[7]>0;
 }
+/* ---- flowers, fruit and holly berries (Don, 2026-10-03) ----
+   Paint only, like everything else the year does. A plant flowers in spring,
+   carries fruit from the middle of summer into early fall, and one plant in
+   three or so holds red berries through the winter. WHICH nodes carry one is
+   settled by the node's slot and the tick it was born, neither of which
+   changes in its life; WHAT a plant's flower and fruit look like is hashed
+   from its tone, as its other looks are, so the world's random stream is
+   untouched, a family shares them and a piece keeps them.
+   Variety is by construction and not by a list: a flower is a petal count, a
+   petal outline, a notch, how deep the gaps go, the size of its eye, a second
+   whorl, two colours and a size; fruit is a layout, a count, two colours and a
+   size. The fragment shader draws both from one packed number (bloomQ).
+   Nothing here arrives or leaves at size. The year's envelope is a ramp, each
+   plant is a little early or late (off), each node opens at its own point of
+   the ramp, a young node grows its flower in and an old one closes it as it
+   closes its leaf. It sits at the joint, a little to one side, whether the
+   node is a tip or not, so budding does not move it. */
+const BLOOM_DIR = new Float32Array(32);
+for(let k=0;k<16;k++){ BLOOM_DIR[k*2]=Math.cos(k*Math.PI/8+0.2); BLOOM_DIR[k*2+1]=Math.sin(k*Math.PI/8+0.2); }
+const FLOWER_COL = [[250,248,240],[255,244,214],[255,222,232],[250,170,196],[236,96,150],[214,52,74],
+                    [248,128,60],[250,206,60],[255,236,120],[206,170,240],[150,110,220],[104,132,236],
+                    [150,200,250],[240,120,220]];
+const EYE_COL = [[246,200,40],[250,160,30],[70,44,28],[250,246,230],[190,214,90],[120,60,130]];
+const BERRY_COL = [[206,30,40],[160,18,44],[240,110,36],[246,196,50],[64,84,170],[40,36,84],
+                   [110,46,120],[236,236,226],[240,130,150],[150,190,60],[30,26,30]];
+function yearRamp(t,a,b,c,d){
+  for(let k=-4;k<=4;k+=4){
+    const x=t+k;
+    if(x>a && x<d) return x<b ? (x-a)/(b-a) : (x<=c ? 1 : (d-x)/(d-c));
+  }
+  return 0;
+}
+let BH = 0;
+function bnext(){
+  BH = Math.imul(BH ^ 0x61C88647, 0x85EBCA6B); BH ^= BH>>>13;
+  BH = Math.imul(BH, 0xC2B2AE35); BH ^= BH>>>16;
+  return (BH>>>0)/4294967296;
+}
+function emitBloom(i, w, keep, dim, cov){
+  if(SEASON.on<=0 || PARAMS.flowers<=0 || NLIVE[i]!==1) return w;
+  let hn = Math.imul(i+1, 0x9E3779B1) ^ Math.imul(NBORN[i]|0, 0x85EBCA6B);
+  hn ^= hn>>>15; hn = Math.imul(hn, 0x2C1B3C6D); hn ^= hn>>>12;
+  const u1 = (hn>>>0)/4294967296;
+  if(u1>=0.46) return w;                       /* no plant is denser than this */
+  _fb[0]=NTL[i]; _fb[1]=NTS[i];
+  let h = Math.imul(_ib[0] ^ Math.imul(_ib[1], 0x9E3779B1), 0x85EBCA6B); h ^= h>>>13;
+  BH = h ^ 0x3C6EF372;
+  if(u1 >= 0.16+0.30*bnext()) return w;
+  const off = (bnext()-0.5)*0.24, uF=bnext(), uR=bnext(), uH=bnext();
+  const shp = NSHAPE[i], t = SEASON.t+off;
+  /* needles, ferns and wheat do not flower; they may still carry fruit */
+  let e = 0, kind = 0;
+  if(uF<0.85 && shp!==5 && shp!==6 && shp!==8) e = yearRamp(t, 0.10, 0.32, 0.85, 1.20);
+  if(e<=0 && uR<0.62){ e = yearRamp(t, 1.35, 1.70, 2.25, 2.60); kind = 1; }
+  if(e<=0 && uH<0.32){ e = yearRamp(t, 2.95, 3.20, 3.50, 3.70); kind = 2; }
+  if(e<=0) return w;
+  const at = ptick-NBORN[i], a = at/Math.max(1, lifeShown(i));
+  if(a>=LEAF_GONE) return w;
+  const u2 = ((Math.imul(hn, 0x27D4EB2F)>>>0))/4294967296;
+  let s = e*1.6 - u2*0.6; s = s<=0 ? 0 : (s>=1 ? 1 : s*s*(3-2*s));
+  if(at<240){ const y=at/240; s *= y*y*(3-2*y); }
+  if(a>LEAF_FULL){ const q=(a-LEAF_FULL)/(LEAF_GONE-LEAF_FULL); s *= 1-q*q*(3-2*q); }
+  s *= keep;
+  if(s<=0.02) return w;
+  let P, col, eye, half, shape;
+  if(kind===0){
+    BH = h ^ 0x1B873593;
+    const n = [3,4,5,5,5,6,6,8,12,16][(bnext()*10)|0];
+    const ex = (bnext()*3)|0, notch = (n<=6 && bnext()<0.3) ? 1 : 0;
+    const rin = n>=12 ? (bnext()*2)|0 : (bnext()*4)|0, rc = (bnext()*4)|0;
+    const dbl = (bnext()<0.25 && n<=8) ? 1 : 0;
+    col = FLOWER_COL[(bnext()*FLOWER_COL.length)|0];
+    eye = EYE_COL[(bnext()*EYE_COL.length)|0];
+    half = PARAMS.step*0.62*(0.75+0.5*bnext());
+    P = n + 32*ex + 128*notch + 256*rin + 1024*rc + 4096*dbl; shape = 20;
+  } else if(kind===1){
+    BH = h ^ 0x52DCE729;
+    const lay = (bnext()*4)|0;
+    const k = lay===0 ? 1+((bnext()*6)|0) : (lay===1 ? 3+((bnext()*4)|0) : (lay===2 ? 2 : 1+((bnext()*0)|0)));
+    const cal = (bnext()<0.4 && lay!==3) ? 1 : 0;   /* never on the long ones: white with a dark calyx was an eye */
+    col = BERRY_COL[(bnext()*BERRY_COL.length)|0];
+    eye = (lay===1 || lay===2) ? [92,70,44] : [36,28,26];
+    half = PARAMS.step*(lay===3 ? 0.62 : (k===1 ? 0.52 : 0.95))*(0.75+0.45*bnext());
+    P = k + 8*lay + 32*cal; shape = 21;
+  } else {
+    BH = h ^ 0x38495AB5;
+    const k = 2+((bnext()*3)|0);
+    col = bnext()<0.8 ? BERRY_COL[0] : BERRY_COL[2];
+    eye = [36,28,26];
+    half = PARAMS.step*0.72*(0.8+0.3*bnext());
+    P = k + 32; shape = 21;
+  }
+  half *= PARAMS.bloom*s;
+  drawPos(i);
+  const side = (hn>>>9)&1 ? 1 : -1, d = ((hn>>>4)&15)*2, o = 0.45*half*side;
+  let dx=BLOOM_DIR[d], dy=BLOOM_DIR[d+1], ox=-NHY[i]*o, oy=NHX[i]*o;
+  if(shape===21){
+    /* Fruit hangs FROM the branch (Don, 2026-10-03): it points away from it,
+       to one side and tilted a little by the node's own hash, and it is set
+       out along that direction so that where its stalks begin, the near end
+       of its square, is on the node. Placed at random angles a pair of
+       cherries was a V joined to nothing. A cluster with no stalk sits
+       against the branch instead. */
+    const t=(((hn>>>13)&255)/255-0.5)*1.2, c=1-0.5*t*t;
+    dx=-NHY[i]*side*c+NHX[i]*t; dy=NHX[i]*side*c+NHY[i]*t;
+    const l=Math.sqrt(dx*dx+dy*dy)||1; dx/=l; dy/=l;
+    const lay=(P>>3)&3, reach=(lay===1 || lay===2) ? 0.94 : 0.45;
+    ox=dx*reach*half; oy=dy*reach*half;
+  }
+  IBUF[w+I_A]=DP[0]+ox; IBUF[w+I_A+1]=DP[1]+oy;
+  IBUF[w+I_B]=half; IBUF[w+I_B+1]=half;
+  IBUF[w+I_C0]=P;
+  IBUF[w+I_C]=0; IBUF[w+I_C+1]=shape;
+  IBUF[w+I_D]=dx; IBUF[w+I_D+1]=dy;
+  IBUF[w+I_W]=-1; IBUF[w+I_W+1]=eye[0]+eye[1]*256+eye[2]*65536;
+  IBUF[w+I_COL  ]=col[0]*dim/255;
+  IBUF[w+I_COL+1]=col[1]*dim/255;
+  IBUF[w+I_COL+2]=col[2]*dim/255;
+  IBUF[w+I_COL+3]=Math.min(1, 0.96*cov);
+  return w+INST;
+}
+/* ---- a painted breeze (Don, 2026-10-03) ----
+   Summer and fall are the breezy seasons, and the world's pace cannot say so:
+   fall runs slow. So the leaves flutter, in paint, on the wall clock: each
+   leaf's drawn direction is turned a little, by two ripples that cross the
+   arena and a slow gust that swells and leans them. The phase is read off
+   where the leaf is DRAWN and never off its node, so a leaf handed from a tip
+   to its child does not change phase in the handing. No trigonometry: tri is
+   a rounded triangle wave. Sampled at one moment per build (BREEZE_T), which
+   styleat pins. Returns the turn, in radians, small. */
+let BREEZE_T = 0;
+function tri(u){ const w=4*Math.abs(u-Math.floor(u)-0.5)-1; return w*(1.5-0.5*w*w); }
+function breezeOf(x, y){
+  const A=SEASON.breeze;
+  if(!(A>0) || SEASON.on<=0) return 0;
+  const t=BREEZE_T, g=0.5+0.5*tri(0.30*x+0.17*y-0.11*t);
+  const f=0.6*tri(1.4*t+7.3*x+11.1*y) + 0.4*tri(2.3*t-9.1*x+5.7*y);
+  return A*(0.30*(0.25+0.75*g)*f + 0.14*(g-0.5));
+}
 /* a leaf instance, wherever it hangs */
 function writeLeaf(w, x, y, i, wid, leafK, dx, dy, r, g, b, al){
   const shp=NSHAPE[i], lw = shp===0 ? wid : wid*LEAFBIG*LEAFFIT[shp];
+  { const th=breezeOf(x, y); if(th!==0){ const c=1-0.5*th*th, nx=dx*c-dy*th; dy=dy*c+dx*th; dx=nx; } }
   leafRoll(i); leafK*=ROLL[1];
   IBUF[w+I_A]=x;  IBUF[w+I_A+1]=y;
   IBUF[w+I_B]=lw; IBUF[w+I_B+1]=lw*ROLL[0];
@@ -3768,6 +3967,7 @@ function emitNode(i, pass, w){
      * about 190 ticks a second whatever the time-lapse is set to, and `fadein`
      * is therefore in real time as well as in ticks. */
     const al=Math.min(1, PARAMS.alpha*varyO(i)*STYLE.alpha)*PAINT[3]*(de<0.9 ? 1 : (1-de)/0.1);
+    const cov=PAINT[3]*(de<0.9 ? 1 : (1-de)/0.1);          /* a flower's, which is not thinned as a leaf is */
 
     /* the branch back to the parent: an ellipse lying along the step, centred
        between the two, so a body reads as connected structure rather than as a
@@ -3921,7 +4121,8 @@ function emitNode(i, pass, w){
       w = writeLeaf(w, x+TW[0]*keep, y+TW[1]*keep, i, TW[7]*keep, TW[8], TW[9], TW[10], r, g, b, al);
     }
     /* a node with a child has handed its leaf on, carried or not */
-    if(pass===0 || !(leafOn || (carried && NLK[i]===0)) || PARAMS.tipleaf<=0) return w;
+    if(pass===0) return w;
+    if(!(leafOn || (carried && NLK[i]===0)) || PARAMS.tipleaf<=0) return emitBloom(i, w, keep, dim, cov);
     drawPos(i);
     IBUF[w+I_A]=DP[0];   IBUF[w+I_A+1]=DP[1];
     /* a shaped leaf carries its own proportions, and covers less of its
@@ -3957,6 +4158,8 @@ function emitNode(i, pass, w){
         if(sl>1e-3){ NLDX[i]=sx/sl; NLDY[i]=sy/sl; } else { NLDX[i]=lhx; NLDY[i]=lhy; }
       }
       lhx=NLDX[i]; lhy=NLDY[i]; }
+    /* and the breeze, on what is drawn and not on what is kept */
+    { const th=breezeOf(DP[0], DP[1]); if(th!==0){ const c=1-0.5*th*th, nx=lhx*c-lhy*th; lhy=lhy*c+lhx*th; lhx=nx; } }
     IBUF[w+I_C]=rot;     IBUF[w+I_C+1]=shp;
     IBUF[w+I_D]=lhx;     IBUF[w+I_D+1]=lhy;
     /* W.y of a leaf: what its colour is multiplied by to give its BRANCH's.
@@ -3970,7 +4173,7 @@ function emitNode(i, pass, w){
     IBUF[w+I_COL+3]=al;
     w+=INST;
   
-  return w;
+  return emitBloom(i, w, keep, dim, cov);     /* over its own leaf */
 }
 
 /* The cursor a sliced rebuild carries between frames. */
@@ -3995,7 +4198,9 @@ function beginInstances(){
   let w=0;
   paintFor = -1; BUILD++;
   sampleSeason(); sampleStyle();
-  const WLIM=(MAXINST-2)*INST;
+  BFRAC = TFRAC;
+  BREEZE_T = PARAMS.styleat>=0 ? PARAMS.styleat : performance.now()/1000;
+  const WLIM=(MAXINST-6)*INST;
   const _g0 = performance.now();
   orderGhosts();
   PERF.bghost += performance.now() - _g0;
@@ -4028,8 +4233,8 @@ function beginInstances(){
 /* ... and of this lineage, those whose node stood at or before slot idx: a
    ghost goes under a newborn that took its slot, as it was under it */
 function upTo(key, w, idx){
-  const WLIM = SB.layered ? LEAF0-2*INST : (MAXINST-2)*INST;
-  while(SB.gi<gorderN && w<WLIM && SB.wl<(MAXINST-2)*INST){
+  const WLIM = SB.layered ? LEAF0-6*INST : (MAXINST-6)*INST;
+  while(SB.gi<gorderN && w<WLIM && SB.wl<(MAXINST-6)*INST){
     const n=GORDER[SB.gi];
     if(key>=0){ const gk=GKEY[n];
       if(gk>key) break;
@@ -4054,7 +4259,7 @@ function upTo(key, w, idx){
    means finish now, which is what instHash and every non-frame caller wants. */
 function stepInstances(budgetMs){
   if(!SB.busy) return true;
-  const WLIM = SB.layered ? LEAF0-2*INST : (MAXINST-2)*INST;
+  const WLIM = SB.layered ? LEAF0-6*INST : (MAXINST-6)*INST;
   const t0 = performance.now();
   let w = SB.w;
   while(SB.a < SB.n && w < WLIM){
@@ -4063,7 +4268,7 @@ function stepInstances(budgetMs){
     while(b<SB.n && NDRAW[ORDER[b]]===key) b++;
     w = upTo(key, w, SB.limbs===0 ? -1 : 1e9);
     if(SB.layered){
-      for(let q=SB.a;q<b && w<WLIM && SB.wl<(MAXINST-2)*INST;q++){
+      for(let q=SB.a;q<b && w<WLIM && SB.wl<(MAXINST-6)*INST;q++){
         const i=ORDER[q];
         w = upTo(key, w, i);
         if(PARAMS.twigs>0){
@@ -4100,6 +4305,7 @@ function stepInstances(budgetMs){
   w = upTo(-1, w);
   if(SB.layered){ IBUF.copyWithin(w, LEAF0, SB.wl); w += SB.wl-LEAF0; }
   SB.w = w; SB.busy = false;
+  BFRAC = 0;
   instN = w/INST;
   PERF.bemit += performance.now()-t0;
   return true;
@@ -4698,7 +4904,7 @@ const NDIEAT=new Int32Array(PMAX); let DYL=new Int32Array(1024), dyN=0;
 const NDTIP=new Uint8Array(PMAX);
 function dyingE(i){
   if(!NDYING[i]) return 0;
-  const age=ptick-NTAT[i], T=NTT[i];
+  const age=ptick-NTAT[i]+BFRAC, T=NTT[i];
   if(age<=0 || !(T>0)) return 0;
   const u = age>=T ? 1 : age/T, clock=T*u*u*(3-2*u);
   const e=(clock-NT0[i])/Math.max(1e-6, NT1[i]-NT0[i]);
@@ -6104,6 +6310,7 @@ layout(location=7) in float aC0;      /* a branch's starting colour, packed; its
 uniform vec2 uInv;
 uniform float uPx;                    /* one pixel, in arena units */
 out vec2 vC; out vec4 vCol; flat out float vKind; flat out float vShape; flat out float vStalk; out float vCap; flat out float vSW;
+flat out vec2 vDir;                   /* the way a leaf, flower or fruit lies */
 void main(){
   float tr=aUV.x, s=aUV.y;
   float t=clamp(tr, 0.0, 1.0);
@@ -6116,10 +6323,13 @@ void main(){
     vShape = aC.y;
     /* every shape but the round one, the clover and the dandelion grows from the node: the
        square is pushed ahead along the heading so its base sits on it */
-    float ahead = (aC.y > 0.5 && abs(aC.y-4.0) > 0.5 && abs(aC.y-9.0) > 0.5) ? 1.0 : 0.0;
+    float ahead = (aC.y > 0.5 && aC.y < 19.5 && abs(aC.y-4.0) > 0.5 && abs(aC.y-9.0) > 0.5) ? 1.0 : 0.0;
     vec2 e = (c + vec2(ahead, 0.0))*aB;
     p = aA + vec2(e.x*ca - e.y*sa, e.x*sa + e.y*ca);
-    vC = c; vKind = 0.0; vStalk = aW.y; vSW = clamp(aC0, 0.012, 0.2);
+    /* a flower or a fruit (shape 20, 21) carries a packed description here
+       and its second colour in W.y: see bloomQ */
+    vC = c; vKind = 0.0; vStalk = aW.y; vSW = aC.y > 19.5 ? aC0 : clamp(aC0, 0.012, 0.2);
+    vDir = aD;
   } else {
     /* a branch: a cubic Hermite from A to B with tangents C and D */
     float t2=t*t, t3=t2*t;
@@ -6147,11 +6357,13 @@ void main(){
       vCol.rgb = mix(vec3(cr, cg, cb)/255.0, aCol.rgb, t);
     }
     vC = vec2(2.0*t-1.0, s); vKind = 1.0; vShape = 0.0; vStalk = 1.0; vSW = 0.06;
+    vDir = vec2(1.0, 0.0);
   }
   gl_Position = vec4(p*uInv, 0.0, 1.0);
 }`, `#version 300 es
 precision highp float;
 in vec2 vC; in vec4 vCol; flat in float vKind; flat in float vShape; flat in float vStalk; in float vCap; flat in float vSW;
+flat in vec2 vDir;
 /* the stalk's half-width in the leaf's own units, set in main from vSW */
 float gSW = 0.06;
 /* set by leafQ when the point is on the leaf's stalk and not its blade, so
@@ -6318,15 +6530,110 @@ float leafQ(vec2 p, float s){
   q = min(q, leafletQ(v, vec2(-0.105, 0.995), 0.68, 0.17, 0.0));
   return orStalk(q, stalk);
 }
+/* A flower (shape 20) or fruit (21), centred on its node. One packed number
+   says which: for a flower the petal count, the petal's outline, whether it
+   is notched, how deep the gaps between petals go, the size of the eye and
+   whether there is a second whorl; for fruit how many, laid out how, and
+   whether each has a dark calyx. The second colour, the eye or the stalk,
+   comes packed in vStalk. This is the one place with trigonometry per
+   fragment, an arctangent, and only the fragments of a flower pay for it. */
+const vec2 HX[6] = vec2[6](vec2(1.0,0.0), vec2(0.5,0.866), vec2(-0.5,0.866),
+                           vec2(-1.0,0.0), vec2(-0.5,-0.866), vec2(0.5,-0.866));
+float bloomQ(vec2 p, inout vec3 rgb){
+  float P = vSW;
+  float pk = vStalk;
+  float cb = floor(pk/65536.0); pk -= cb*65536.0;
+  float cg = floor(pk/256.0);
+  vec3 cen = vec3(pk - cg*256.0, cg, cb)/255.0;
+  float r = length(p);
+  if(vShape < 20.5){
+    float n = mod(P, 32.0);
+    float e = mod(floor(P/32.0), 4.0);
+    float notch = mod(floor(P/128.0), 2.0);
+    float rin = 0.12 + 0.13*mod(floor(P/256.0), 4.0);
+    float rc = 0.15 + 0.06*mod(floor(P/1024.0), 4.0);
+    float dbl = mod(floor(P/4096.0), 2.0);
+    float ang = atan(p.y, p.x)*0.15915494;
+    float a = fract(ang*n + 0.5) - 0.5;
+    float c = max(0.0, 1.0 - 4.0*a*a);
+    float f = e < 0.5 ? sqrt(c) : (e < 1.5 ? c : c*c);
+    float R = rin + (1.0-rin)*f;
+    if(notch > 0.5) R -= 0.20*max(0.0, 1.0 - abs(a)*7.0);
+    float q = r/max(R, 1e-3);
+    vec3 petal = rgb;
+    rgb = petal*(0.72 + 0.28*r);
+    if(dbl > 0.5){
+      float a2 = fract(ang*n) - 0.5;
+      float R2 = 0.60*(rin + (1.0-rin)*sqrt(max(0.0, 1.0 - 4.0*a2*a2)));
+      if(r < R2){ rgb = mix(petal, vec3(1.0), 0.30); q = min(q, r/R2); }
+    }
+    if(r < rc){ rgb = cen; q = min(q, r/rc); }
+    return q;
+  }
+  float k = mod(P, 8.0), lay = mod(floor(P/8.0), 4.0), cal = mod(floor(P/32.0), 2.0);
+  float q = 9.0, br = 1.0, st = 9.0;
+  vec2 bc = vec2(0.0), sc = vec2(1.0);
+  if(lay < 0.5){
+    /* a cluster: one in the middle and the rest round it */
+    br = k < 1.5 ? 0.80 : 0.40; q = r/br;
+    for(int j=0;j<5;j++){
+      if(float(j) < k-1.0){
+        vec2 c = HX[j]*0.56; float d = length(p-c)/0.40;
+        if(d < q){ q = d; bc = c; br = 0.40; }
+      }
+    }
+  } else if(lay < 1.5){
+    /* a raceme: along a stalk, side to side, smaller toward the end */
+    for(int j=0;j<6;j++){
+      float fj = float(j);
+      if(fj < k){
+        vec2 c = vec2(-0.70 + 0.29*fj, (mod(fj, 2.0) - 0.5)*0.46);
+        float rr = 0.27 - 0.018*fj, d = length(p-c)/rr;
+        if(d < q){ q = d; bc = c; br = rr; }
+      }
+    }
+    st = max(abs(p.y)/0.05, abs(p.x)/0.95);
+  } else if(lay < 2.5){
+    /* a pair, each on its own stalk */
+    for(int j=0;j<2;j++){
+      vec2 c = vec2(0.42, j == 0 ? 0.44 : -0.44);
+      float d = length(p-c)/0.42;
+      if(d < q){ q = d; bc = c; br = 0.42; }
+      vec2 a0 = vec2(-0.94, 0.0), ba = c - a0, pa = p - a0;
+      float h = clamp(dot(pa, ba)/dot(ba, ba), 0.0, 1.0);
+      st = min(st, length(pa - ba*h)/0.05);
+    }
+  } else {
+    /* one, long: a hip or an olive */
+    sc = vec2(0.90, 0.58); q = length(p/sc);
+  }
+  if(q >= 1.0 && st < 1.0){ rgb = cen; return st; }
+  vec2 d = (p - bc)/(br*sc);
+  float dd = dot(d, d);
+  rgb *= 0.70 + 0.30*(1.0 - min(dd, 1.0));
+  /* A berry is a ball, and the light on a ball does not turn when the bunch
+     does: the highlight is up and to the left ON THE SCREEN, brought into the
+     bunch's own frame by its direction. Fixed in that frame, it swung round
+     each berry as the branch swayed and the berry read as a flat disc
+     turning (Don, 2026-10-03). */
+  vec2 hl = vec2(-0.28*vDir.x + 0.30*vDir.y, 0.28*vDir.y + 0.30*vDir.x);
+  rgb = mix(rgb, vec3(1.0), 0.5*(1.0 - smoothstep(0.0, 0.36, length(d - hl))));
+  if(cal > 0.5 && dd < 0.05) rgb = cen;
+  return q;
+}
 void main(){
   /* a leaf is a disc; a branch is soft across itself and whole along */
   gSW = vSW;
-  float q = vKind > 0.5 ? length(vec2(vC.y, vCap)) : leafQ(vC, vShape);
+  vec3 rgb = vCol.rgb;
+  float q;
+  if(vKind > 0.5) q = length(vec2(vC.y, vCap));
+  else if(vShape > 19.5) q = bloomQ(vC, rgb);
+  else q = leafQ(vC, vShape);
   /* ascending, always: a descending smoothstep is undefined and vanishes on
      some drivers */
   float a = (1.0 - smoothstep(1.0-uSoft, 1.0, q))*vCol.a;
   if(a <= 0.004) discard;
-  o = vec4(gStalk > 0.5 ? vCol.rgb*vStalk : vCol.rgb, a);
+  o = vec4(gStalk > 0.5 ? rgb*vStalk : rgb, a);
 }`);
 
 const plantVAO=gl.createVertexArray();
@@ -6632,11 +6939,11 @@ const num = n => n>=1e6 ? (n/1e6).toFixed(1)+"M"
             : n>=1e4 ? Math.round(n/1e3)+"k"
             : String(Math.round(n));
 function updateHUD(){
-  document.getElementById("sc1").textContent =
-    num(liveN)+" living nodes";
-  document.getElementById("sc2").textContent =
-    comps+" plants · mean "+Math.round(meanComp)+" · largest "+num(bigFrag);
-  document.getElementById("sc3").textContent = "";
+  /* The season, as the last build sampled it, and nothing else (Don,
+     2026-10-03): the counts that stood here are on the graphs page. */
+  { const el=document.getElementById("seasonname"), s=SEASON.name;
+    const t=s.charAt(0).toUpperCase()+s.slice(1);
+    if(el.textContent!==t) el.textContent=t; }
 
   /* how big the held plant actually is, which is the question the highlight
      exists to answer — the colour shows the extent, this counts it. Keyed off
@@ -6830,14 +7137,16 @@ function frame(now){
   const _s0 = performance.now();
   let didTicks = 0;
   if(!paused && plantsOn){
-    ecoDebt += viewDt*PARAMS.ecorate*speed;
+    /* times the season's pace: winter is the same world, played slowly */
+    const pace = SEASON.pace;
+    ecoDebt += viewDt*PARAMS.ecorate*speed*pace;
     /* A backlog longer than a second is not a backlog, it is a machine that
        cannot run this world at this speed — and paying it later would make
        the world lurch forward the moment anything got easier. Drop it, and
        say so: `simRate` is measured and the HUD prints it when it falls
        behind, which is the honest version of a speed button that cannot be
        honoured. */
-    const cap = PARAMS.ecorate*speed;
+    const cap = Math.max(1, PARAMS.ecorate*speed*pace);
     if(ecoDebt > cap) ecoDebt = cap;
     /* What the plants may spend is the frame the machine can HOLD, less what
        the rest of the frame needs, and never under their share of it. Until
@@ -6871,6 +7180,16 @@ function frame(now){
         if(performance.now()-_s0 >= wb) break;
       }
     }
+  }
+  /* how far toward the next tick, for whatever is drawn carried on (TFRAC);
+     and with the year turning the leaves flutter on the wall clock, so there
+     is a new picture every frame whether or not a tick ran */
+  if(!paused && plantsOn){
+    if(!tickGen){
+      const f = Math.min(1, Math.max(0, ecoDebt));
+      if(Math.abs(f-TFRAC) > 1e-3){ TFRAC = f; plantsDirty = true; }
+    }
+    if(SEASON.on>0) plantsDirty = true;
   }
   const _simMs = performance.now()-_s0;
   PERF.sim += _simMs;
@@ -6999,7 +7318,7 @@ function showPerf(now){
        the larger, the wait is for the GPU or the display and no amount of
        cheaper JavaScript will shorten it. The budget and the rate asked for
        also say which frame loop a cached page is actually running. */
-    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed)+"/s   gpu "+gpuMs.toFixed(1),
+    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed*SEASON.pace)+"/s   gpu "+gpuMs.toFixed(1),
     "sim    "+(PERF.sim/f).toFixed(1)+" / "+PERF.wsim.toFixed(1)+"      "+PERF.ticks+" ticks  ("+simRate.toFixed(0)+"/s)",
     "sheet  "+(PERF.sheet/f).toFixed(1)+" / "+PERF.wsheet.toFixed(1)+"      "+PERF.sheets+" rebuilds",
     "  ghost "+PERF.bghost.toFixed(1)+"  sort "+PERF.bsort.toFixed(1)+"  emit "+PERF.bemit.toFixed(1)+"  up "+PERF.supload.toFixed(1),
@@ -7389,10 +7708,15 @@ const SETTINGS = [
   test:p=>p.style>0?1:0,
   why:"Whether the look slowly wanders. Leaf size, leaf opacity, branch thickness and color each drift between random goals over a season or so, independently, so the picture is sometimes realistic, sometimes bold and flat, sometimes faint. The dials set the middle of each drift; moving a dial takes it out of the drift."},
  {key:"seasons", name:"Seasons", choice:[
-    {label:"The year turns", why:"spring, summer, fall and winter, each a little different in color and leaf", set:{seasons:1}},
+    {label:"The year turns", why:"spring, summer, fall and winter, each its own colors, ground, leaves, flowers and fruit", set:{seasons:1}},
     {label:"Always summer", why:"one look, held", set:{seasons:0}}],
   test:p=>p.seasons>0?1:0,
-  why:"Whether the seasons change. Spring is pale and light, summer green, fall turns toward orange and red, and winter is dark and muted with smaller leaves. Every plant keeps its own hue through the year, shifted the same way, so they stay easy to tell apart."},
+  why:"Whether the seasons change. Spring is pale and light on bright green ground, summer is green, fall turns red, gold and brown, and winter is dark, with snow on the ground and small leaves on everything but the grasses and needles."},
+ {key:"flowers", name:"Flowers and fruit", choice:[
+    {label:"In season", why:"flowers in spring, fruit in summer and early fall, red berries in winter", set:{flowers:1}},
+    {label:"None", why:"leaves and branches only", set:{flowers:0}}],
+  test:p=>p.flowers>0?1:0,
+  why:"Whether plants flower and fruit as the year turns. Each plant family has its own flower and its own fruit, and some keep red berries through the winter. Needs the seasons to be turning."},
  {key:"season", name:"Season length", min:1, max:10, step:0.5,
   lo:"a minute", hi:"ten minutes",
   why:"How long each season lasts, by the clock on the wall rather than the plants' own time, so it is the same on a slow screen as a fast one.",
@@ -10378,17 +10702,44 @@ layout(location=0) in vec2 aP;
 out vec2 vUV;
 void main(){ vUV = aP*0.5+0.5; gl_Position = vec4(aP, 0.0, 1.0); }`, `#version 300 es
 precision mediump float;
-in vec2 vUV; uniform sampler2D uTex; uniform float uGain; out vec4 o;
-void main(){ o = vec4(texture(uTex, vUV).rgb*uGain, 1.0); }`);
+in vec2 vUV; uniform sampler2D uTex; uniform float uGain; uniform vec4 uTint; uniform vec4 uSnow; out vec4 o;
+/* The ground turns with the year. uTint is a colour of unit brightness and how
+   far to go toward it, keeping each pixel as bright as it was, so the moss and
+   soil keep their texture and change their cast. uSnow is how much snow, how
+   bright snow is, and one over the photograph's mean brightness: snow lies
+   where the ground is light and where a blurred, enlarged piece of the same
+   photograph is, which gives drifts with a fine edge and costs one more
+   sample, taken only in winter. */
+void main(){
+  vec3 c = texture(uTex, vUV).rgb;
+  float l = dot(c, vec3(0.30, 0.59, 0.11));
+  c = mix(c, uTint.rgb*l, uTint.a)*uGain;
+  if(uSnow.x > 0.0){
+    float d = dot(texture(uTex, vUV*0.31 + 0.37, 3.0).rgb, vec3(0.30, 0.59, 0.11));
+    float s = (0.70*l + 0.30*d)*uSnow.z;
+    float t = mix(3.0, 1.50, uSnow.x);
+    float w = smoothstep(t - 0.28, t + 0.28, s);
+    c = mix(c, vec3(0.80, 0.87, 0.97)*uSnow.y*(0.72 + 0.28*min(2.0, l*uSnow.z)), 0.9*w);
+  }
+  o = vec4(c, 1.0);
+}`);
 const bgVAO = gl.createVertexArray();
 { gl.bindVertexArray(bgVAO);
   const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
   gl.bindVertexArray(null); }
-let bgTex = null;
+let bgTex = null, bgLum = 0.3;
 { const img = new Image();
   img.onload = () => {
+    /* the photograph's mean brightness, which the snow line is set against */
+    try{
+      const cv=document.createElement("canvas"); cv.width=32; cv.height=18;
+      const cx=cv.getContext("2d"); cx.drawImage(img,0,0,32,18);
+      const px=cx.getImageData(0,0,32,18).data; let s=0;
+      for(let k=0;k<px.length;k+=4) s+=0.30*px[k]+0.59*px[k+1]+0.11*px[k+2];
+      bgLum=Math.max(0.02, s/(px.length/4)/255);
+    }catch(e){}
     const t=gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D,t);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
@@ -10413,7 +10764,12 @@ function drawGround(){
   gl.useProgram(bgProg);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,bgTex);
   gl.uniform1i(bgProg.u.uTex,0);
-  gl.uniform1f(bgProg.u.uGain, Math.min(1.5, PARAMS.bg));
+  /* as the last build sampled the year, so ground and plants turn together */
+  const gain = Math.min(1.5, PARAMS.bg);
+  gl.uniform1f(bgProg.u.uGain, gain*SEASON.gain);
+  { const n = (0.30*SEASON.gr+0.59*SEASON.gg+0.11*SEASON.gb) || 1;
+    gl.uniform4f(bgProg.u.uTint, SEASON.gr/n, SEASON.gg/n, SEASON.gb/n, SEASON.gk); }
+  gl.uniform4f(bgProg.u.uSnow, SEASON.snow, Math.min(1, 0.20+1.1*gain), 1/bgLum, 0);
   gl.bindVertexArray(bgVAO);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   gl.bindVertexArray(null);
