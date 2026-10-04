@@ -142,6 +142,10 @@
   body.bare #hud .corner.tl, body.bare #hud .corner.bl, body.bare #hud .corner.br,
   body.bare .speeds, body.bare #pins,
   body.bare .ctrls > :not(#hide){display:none !important}
+  /* a television: a remote cannot work the controls, so there are none, and
+     the season in the corner is all there is (Don, 2026-10-03) */
+  body.tv .ctrls, body.tv #pins, body.tv .speeds{display:none !important}
+  body.tv{cursor:none}
   body.bare #hide{opacity:.6}
   body.bare #hide:hover, body.bare #hide:focus-visible{opacity:.9}
   body.bare{cursor:default}
@@ -1383,6 +1387,9 @@ const PARAMS = {
   season:  3,       // minutes a season lasts, 1 to 10
   seasonat: -1,     // hold the year at a point, 0 to 4 (2.5 is the middle of
                     // fall), for a picture; -1 lets it turn
+  tv:      -1,      // a streaming device on a television: no controls, the
+                    // season only, and a world of fewer and bigger plants.
+                    // -1 decides by the browser (see IS_TV), 0 never, 1 always
   flowers: 1,       // flowers in spring, fruit in summer and early fall, holly
                     // berries in winter: see emitBloom. Paint only, and only
                     // while the year turns. 0 = none
@@ -7007,15 +7014,28 @@ function machineBench(){
   return best;
 }
 let sized = {probeMs:0, factor:0, step:0};
+/* A Google TV Streamer says so in its user agent (in the BrowseHere browser,
+   read off the overlay 2026-10-03); a Fire TV's Silk names an Amazon model
+   that begins AFT. */
+const IS_TV = PARAMS.tv>0 || (PARAMS.tv<0 && /Google TV Streamer|\bAFT[A-Z0-9]+\b/.test(String(navigator.userAgent||"")));
+const TV_STEP = 0.08, TV_PLANTS = 40;
 function sizeToMachine(ms){
   const f = ms/AUTO_REF;
   sized = {probeMs:+ms.toFixed(0), factor:+f.toFixed(2), step:0};
-  if(PARAMS.auto<=0 || /[#&]step=/.test(location.hash||"") || f < AUTO_OK) return false;
-  const step = Math.min(0.06, Math.round(0.03*Math.sqrt(f/AUTO_OK)*200)/200);
+  if(PARAMS.auto<=0 || /[#&]step=/.test(location.hash||"")) return false;
+  if(!IS_TV && f < AUTO_OK) return false;
+  let step = Math.min(0.06, Math.round(0.03*Math.sqrt(Math.max(f, AUTO_OK)/AUTO_OK)*200)/200);
+  /* a television gets fewer and bigger plants than the probe alone would
+     give it, whatever the probe says: Don asked for less than 0.06 gave */
+  let more = "";
+  if(IS_TV){
+    step = Math.max(step, TV_STEP);
+    if(!/[#&]maxplants=/.test(location.hash||"")) more = '&maxplants=' + TV_PLANTS;
+  }
   sized.step = step;
   if(step <= PARAMS.step) return false;
   const h = location.hash||"#", base = location.href.split('#')[0].split('?')[0];
-  location.replace(base + '?r=' + Date.now() + h + (h.length>1 ? '&' : '') + 'step=' + step);
+  location.replace(base + '?r=' + Date.now() + h + (h.length>1 ? '&' : '') + 'step=' + step + more);
   return true;
 }
 let buildMs = 0;
@@ -7039,9 +7059,20 @@ let ecoDebt = 0;
 let res = 1;                           // adaptive resolution multiplier
 let lastFrameMs = 16.7;
 let lastBudget = 0, workSum = 0;
+let ecoGov = 1, ranTicks = false;       // the share of the rate asked for that the machine can hold; whether this frame ran the world
 let simHeld = 0;                       // the world's share of this frame, given to a rebuild in flight
 let gpuLast = 0, gpuFresh = false;
 const GPUPX = new Uint8Array(4);
+let gpuSync = null, gpuT0 = 0, gpuPolls = 0;
+function gpuPoll(){
+  if(!gpuSync) return;
+  const s = gl.clientWaitSync(gpuSync, 0, 0);
+  if(s === gl.TIMEOUT_EXPIRED && ++gpuPolls < 400){ setTimeout(gpuPoll, 2); return; }
+  const g = performance.now() - gpuT0;
+  gl.deleteSync(gpuSync); gpuSync = null;
+  if(s === gl.WAIT_FAILED) return;
+  gpuMs = Math.max(g, gpuLast); gpuLast = g; gpuFresh = true;
+}
 let gpuMs = 0, gpuAt = 0;              // how long the GPU took over one frame's draws, and when that was last asked
 let govWork = 0;                       // the frames' own work since the governor last looked
 let otherMs = 4, slowFrames = false;   // the frame's work apart from the ecology; and whether 60 is out of reach
@@ -7139,15 +7170,19 @@ function frame(now){
   if(!paused && plantsOn){
     /* times the season's pace: winter is the same world, played slowly */
     const pace = SEASON.pace;
-    ecoDebt += viewDt*PARAMS.ecorate*speed*pace;
+    ecoDebt += viewDt*PARAMS.ecorate*speed*pace*ecoGov;
     /* A backlog longer than a second is not a backlog, it is a machine that
        cannot run this world at this speed — and paying it later would make
        the world lurch forward the moment anything got easier. Drop it, and
        say so: `simRate` is measured and the HUD prints it when it falls
        behind, which is the honest version of a speed button that cannot be
        honoured. */
-    const cap = Math.max(1, PARAMS.ecorate*speed*pace);
+    /* a quarter of a second's worth, where it was a whole second: a pause
+       that long is lost, not run to catch up, because the catching up is a
+       lurch as visible as the pause was */
+    const cap = Math.max(2, PARAMS.ecorate*speed*pace*0.25);
     if(ecoDebt > cap) ecoDebt = cap;
+    ranTicks = !SB.busy;
     /* What the plants may spend is the frame the machine can HOLD, less what
        the rest of the frame needs, and never under their share of it. Until
        2026-09-20 it was a share of lastFrameMs, which is how long the last
@@ -7185,10 +7220,26 @@ function frame(now){
      and with the year turning the leaves flutter on the wall clock, so there
      is a new picture every frame whether or not a tick ran */
   if(!paused && plantsOn){
-    if(!tickGen){
-      const f = Math.min(1, Math.max(0, ecoDebt));
-      if(Math.abs(f-TFRAC) > 1e-3){ TFRAC = f; plantsDirty = true; }
+    /* what is still owed: a tick in flight has already counted itself */
+    const owe = ecoDebt - (tickGen ? 1 : 0);
+    /* ---- a rate the machine can hold (2026-10-03) ----
+       Asked for more ticks than a frame's budget pays, the debt sat at its
+       ceiling, the drawn clock stuck a tick ahead, and each picture moved the
+       world by however many ticks that frame happened to afford: none, then
+       three. Measured as one picture in three showing the world at under
+       half or over one and a half times its mean speed, on the desktop as on
+       a throttled CPU. Steady and a little slower beats fast and uneven, so
+       the rate asked for is governed: every frame that ends still owing a
+       whole tick takes 3% off it, and it climbs back 3% a second, which
+       settles where about one frame a second falls short. */
+    if(ranTicks){
+      if(owe >= 1) ecoGov = Math.max(0.2, ecoGov*0.97);
+      else ecoGov = Math.min(1, ecoGov + 0.03*viewDt);
     }
+    /* and the frame that does fall short is drawn carried on past the tick
+       it is waiting for, up to two, instead of standing still */
+    const f = Math.min(2, Math.max(0, owe));
+    if(Math.abs(f-TFRAC) > 1e-3){ TFRAC = f; plantsDirty = true; }
     if(SEASON.on>0) plantsDirty = true;
   }
   const _simMs = performance.now()-_s0;
@@ -7209,18 +7260,23 @@ function frame(now){
 
   drawGround();
   renderPlants();
-  /* One frame in a couple of seconds waits for the GPU to finish, and the
-     wait is the measurement (gl.readPixels below). The larger of the last two, so one lucky frame
-     cannot raise the resolution. It costs that frame its overlap with the
-     GPU and nothing else. */
-  if(now - gpuAt > 2000){
+  /* Every couple of seconds the GPU is timed over one frame's draws: a fence
+     goes in after them and gpuPoll asks, from a timer, whether the GPU has
+     reached it. The larger of the last two, so one lucky frame cannot raise
+     the resolution.
+     It was a read of one pixel, which cannot return until the pixel exists,
+     and the wait was the measurement. It was also a STALL: the page stood
+     still for it, 400 to 650ms on an integrated GPU, every two seconds, and
+     the world then ran to catch up. Measured 2026-10-03 as 7 gaps of over a
+     tenth of a second in 15 seconds of pictures, and none with it off; it is
+     what "the motion comes in jerks" was. A fence asks the same question and
+     waits for nothing. (gl.finish() returns at once in Chrome and measures
+     nothing.) */
+  if(!gpuSync && now - gpuAt > 2000){
     gpuAt = now;
-    /* a read of one pixel, because that cannot return until the pixel
-       exists. gl.finish() was the obvious call and in Chrome returns at
-       once: it measured 0.1ms on a GPU that was the whole frame. */
-    const g0 = performance.now(); gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,GPUPX);
-    const g = performance.now() - g0;
-    gpuMs = Math.max(g, gpuLast); gpuLast = g; gpuFresh = true;
+    gpuSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    if(gpuSync){ gpuT0 = performance.now(); gpuPolls = 0; setTimeout(gpuPoll, 0); }
   }
   gl.disable(gl.SCISSOR_TEST);
 
@@ -7333,7 +7389,7 @@ function showPerf(now){
        the larger, the wait is for the GPU or the display and no amount of
        cheaper JavaScript will shorten it. The budget and the rate asked for
        also say which frame loop a cached page is actually running. */
-    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed*SEASON.pace)+"/s   gpu "+gpuMs.toFixed(1),
+    "frame  "+(1000/Math.max(1,fpsNow)).toFixed(1)+"   work "+(workSum/f).toFixed(1)+"   budget "+lastBudget.toFixed(1)+(slowFrames?" slow":"")+"   asks "+Math.round(PARAMS.ecorate*speed*SEASON.pace*ecoGov)+"/s"+(ecoGov<0.995 ? " (held to "+Math.round(ecoGov*100)+"%)" : "")+"   gpu "+gpuMs.toFixed(1),
     "sim    "+(PERF.sim/f).toFixed(1)+" / "+PERF.wsim.toFixed(1)+"      "+PERF.ticks+" ticks  ("+simRate.toFixed(0)+"/s)",
     "sheet  "+(PERF.sheet/f).toFixed(1)+" / "+PERF.wsheet.toFixed(1)+"      "+PERF.sheets+" rebuilds",
     "  ghost "+PERF.bghost.toFixed(1)+"  sort "+PERF.bsort.toFixed(1)+"  emit "+PERF.bemit.toFixed(1)+"  up "+PERF.supload.toFixed(1),
@@ -7342,6 +7398,7 @@ function showPerf(now){
     GLINFO,
     "key    "+lastKey,
     "ptr    "+lastPtr,
+    "awake  "+wakeState,
     UALINES,
     /* the year and the drift, as the last build sampled them: the season,
        how far through it, and each walk's multiplier with where it is going */
@@ -11213,6 +11270,30 @@ window.__world = {
 /* last, because putting the interface away touches every panel, and every
    panel has to exist first */
 if(PARAMS.ui<=0) setBare(true);
+if(IS_TV) document.body.classList.add("tv");
+/* ---- staying awake ----
+   A page nobody touches looks idle to a browser, and a television put this
+   one to sleep (Don, 2026-10-03). The Screen Wake Lock is the browser's own
+   way to be asked not to; it is given only to a visible page, is taken back
+   whenever the page is hidden, and so is asked for again each time the page
+   comes back, and on any key or press in case this browser wants a gesture
+   first. Nothing is fetched and nothing happens where it is not offered.
+   The overlay says how it went, since a television has no console. */
+let wakeLock = null, wakeState = "not asked";
+function keepAwake(){
+  if(wakeLock) return;
+  if(!navigator.wakeLock || !navigator.wakeLock.request){ wakeState = "not offered by this browser"; return; }
+  if(document.visibilityState !== "visible") return;
+  wakeState = "asking";
+  navigator.wakeLock.request("screen").then(l => {
+    wakeLock = l; wakeState = "held";
+    l.addEventListener("release", () => { wakeLock = null; wakeState = "released"; });
+  }, e => { wakeState = "refused: "+((e && e.name) || e); });
+}
+keepAwake();
+document.addEventListener("visibilitychange", keepAwake);
+addEventListener("pointerdown", keepAwake, {passive:true});
+addEventListener("keydown", keepAwake);
 
 })();
 </script>

@@ -466,9 +466,44 @@ gives its whole budget to one or the other. Same work a frame, same ticks a
 second, nothing missing. `instHash` never saw this, because it never ran a
 tick between slices.
 
-**The resolution governor times the GPU.** Every two seconds one frame reads
-back a pixel, which cannot return until the frame is drawn, and the backlog
-in FRAMES decides. Two indirect tests failed first: the frame rate alone cut a
+**The resolution governor times the GPU, without stopping the page.** Every
+two seconds a fence (`gl.fenceSync`) goes in after a frame's draws and a timer
+asks whether the GPU has reached it (`gpuPoll`); the backlog in FRAMES
+decides. Until 2026-10-03 it was a read of one pixel, which cannot return
+until the frame is drawn, and that read was a STALL of 400 to 650ms on an
+integrated GPU every two seconds, after which the world ran to catch up. It
+was what "the motion comes in jerks" was, and it was on the desktop as much
+as the television: 7 gaps over 100ms in 15 seconds of pictures, none without.
+
+**A rate the machine can hold (`ecoGov`, 2026-10-03).** Asked for more ticks
+than a frame's budget pays, the debt sat at its ceiling and each picture moved
+the world by whatever that frame afforded, none and then three: a picture in
+three showed the world at under half or over one and a half times its mean
+speed. Every frame that ends still owing a whole tick takes 3% off the rate
+asked for and it climbs back 3% a second; a frame that falls short is drawn
+carried on up to two ticks ahead. Measured after: 0 to 1% of pictures outside
+that band at 1x, 6x and 10x CPU throttle. THE COST: the world runs slower
+than asked on a machine at its limit (80 of 96 ticks a second on the desktop
+at 13,000 nodes, 44 at 10x throttle and step 0.06). The overlay says "held to
+N%". Backlog is capped at a quarter second, not a whole one.
+
+**`tools/smooth.js <throttle> <hash> [seconds]`** is the probe for all of
+this and is kept: a scratch copy of the page, a real GPU (headless Chromium
+with `--use-angle=d3d11`), optional CPU throttle, and for every completed
+build when it was shown and what moment of the world it drew. Read "speed
+shown per picture" and "gaps over 100ms"; the rms timing line is polluted by
+the governor's slow drift and means little.
+
+**A television (`tv`, `IS_TV`, 2026-10-03).** A Google TV Streamer (user agent
+contains exactly that, in the BrowseHere browser) or a Fire TV (an `AFT`
+model code) gets no controls at all, only the season in the corner
+(`body.tv`), and a world of `step` 0.08 and 40 plants whatever the probe
+says. `tv=1` shows it on a desktop, `tv=0` turns it off. BrowseHere passes no
+keys to the page until the viewer holds select, and then only up and down,
+as keyCodes 33 and 34 (PageUp, PageDown); back leaves that mode. A preset
+picker on those two keys is planned, not built.
+
+Two indirect tests of the GPU failed first: the frame rate alone cut a
 CPU-bound stick to 806x453 for nothing, and "the share of the frame not
 accounted for by our work" read a 20ms frame shown at a 33ms refresh as 40%
 waiting for pixels. `gl.finish()` returns at once in Chrome and measures
@@ -490,7 +525,7 @@ the world a stick shows is the world its link reproduces; naming step, or
 over one world for every machine. The probe is noisy, about a fifth either
 way on one machine. CPU throttling in Chromium
 (`Emulation.setCPUThrottlingRate`, 10x) is a fair stand-in for the stick's
-CPU and no stand-in at all for its GPU. A backlog longer than a second
+CPU and no stand-in at all for its GPU. A backlog longer than a quarter second
 is dropped rather than paid later, and the HUD prints the rate actually
 achieved — never the multiplier, because on a slow machine that would be a claim
 the piece cannot keep.
