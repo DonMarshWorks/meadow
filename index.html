@@ -1384,12 +1384,15 @@ const PARAMS = {
                     // and saturation each wander between random goals, as
                     // multipliers on the dials. See styleAt. 0 holds them.
   seasons: 1,       // the year turns: see seasonAt. 0 holds summer for ever
-  season:  3,       // minutes a season lasts, 1 to 10
+  season:  1,       // minutes a season lasts, 1 to 10. It was 3 until 2026-10-04
   seasonat: -1,     // hold the year at a point, 0 to 4 (2.5 is the middle of
                     // fall), for a picture; -1 lets it turn
   tv:      -1,      // a streaming device on a television: no controls, the
                     // season only, and a world of fewer and bigger plants.
                     // -1 decides by the browser (see IS_TV), 0 never, 1 always
+  insects: 1,       // white butterflies in late spring and early summer, bees
+                    // while there are flowers: see bugsStep. Paint only, on the wall clock,
+                    // and only while the year turns. 0 = none
   flowers: 1,       // flowers in spring, fruit in summer and early fall, holly
                     // berries in winter: see emitBloom. Paint only, and only
                     // while the year turns. 0 = none
@@ -3014,11 +3017,13 @@ function wheelDeg(h){
    nothing dies of the cold, and seed 7 is still the same world. Slowing
    growth alone would have killed every plant a quarter of the way into
    winter, since a node lives 3,250 ticks and a season is 14,400.
+   Spring, summer and fall were 1.2, 1.2 and 0.6 and each lost a fifth on
+   2026-10-04, because the plants moved too fast; winter was left as it was.
    breeze is a flutter of the leaves, painted: see breezeOf. */
 const SEASONS = [
-  {name:"spring", hue: 95, k:0.30, sat:0.85, light: 0.13, leaf:0.85, gr:0.55, gg:1.00, gb:0.35, gk:0.75, gain:2.10, snow:0, pace:1.20, breeze:0.30},
-  {name:"summer", hue:125, k:0.45, sat:1.10, light: 0.00, leaf:1.00, gr:0.80, gg:1.00, gb:0.70, gk:0.00, gain:1.00, snow:0, pace:1.20, breeze:0.80},
-  {name:"fall",   hue: 30, k:0.92, sat:1.45, light: 0.00, leaf:0.90, gr:1.00, gg:0.58, gb:0.26, gk:0.80, gain:1.35, snow:0, pace:0.60, breeze:1.00},
+  {name:"spring", hue: 95, k:0.30, sat:0.85, light: 0.13, leaf:0.85, gr:0.55, gg:1.00, gb:0.35, gk:0.75, gain:2.10, snow:0, pace:0.96, breeze:0.30},
+  {name:"summer", hue:125, k:0.45, sat:1.10, light: 0.00, leaf:1.00, gr:0.80, gg:1.00, gb:0.70, gk:0.00, gain:1.00, snow:0, pace:0.96, breeze:0.80},
+  {name:"fall",   hue: 30, k:0.92, sat:1.45, light: 0.00, leaf:0.90, gr:1.00, gg:0.58, gb:0.26, gk:0.80, gain:1.35, snow:0, pace:0.48, breeze:1.00},
   {name:"winter", hue:215, k:0.20, sat:0.45, light:-0.18, leaf:0.35, gr:0.78, gg:0.88, gb:1.00, gk:0.60, gain:0.80, snow:1, pace:0.15, breeze:0.10}];
 const SEASON_F = ["k","sat","light","leaf","gr","gg","gb","gk","gain","snow","pace","breeze"];
 const SEASON = {t:1.5, name:"summer", hue:120, k:0, sat:1, light:0, leaf:1, fall:0, winter:0,
@@ -3787,16 +3792,23 @@ function bnext(){
   BH = Math.imul(BH, 0xC2B2AE35); BH ^= BH>>>16;
   return (BH>>>0)/4294967296;
 }
-function emitBloom(i, w, keep, dim, cov){
-  if(SEASON.on<=0 || PARAMS.flowers<=0 || NLIVE[i]!==1) return w;
+/* Whether node i carries a flower or fruit now, and how far open: the one
+   rule, asked by the paint (emitBloom) and by the bees, which stop only on
+   flowers. Returns the size, 0 to 1, and leaves which kind in BL_KIND (0 a
+   flower, 1 fruit, 2 winter berries) with the two hashes the paint goes on
+   from. paint says the caller is a build, which may ease the node's shown
+   life; a bee reads the real one and touches nothing. */
+let BL_KIND = 0, BL_HN = 0, BL_H = 0;
+function bloomOn(i, paint){
+  if(SEASON.on<=0 || PARAMS.flowers<=0 || NLIVE[i]!==1) return 0;
   let hn = Math.imul(i+1, 0x9E3779B1) ^ Math.imul(NBORN[i]|0, 0x85EBCA6B);
   hn ^= hn>>>15; hn = Math.imul(hn, 0x2C1B3C6D); hn ^= hn>>>12;
   const u1 = (hn>>>0)/4294967296;
-  if(u1>=0.46) return w;                       /* no plant is denser than this */
+  if(u1>=0.46) return 0;                       /* no plant is denser than this */
   _fb[0]=NTL[i]; _fb[1]=NTS[i];
   let h = Math.imul(_ib[0] ^ Math.imul(_ib[1], 0x9E3779B1), 0x85EBCA6B); h ^= h>>>13;
   BH = h ^ 0x3C6EF372;
-  if(u1 >= 0.16+0.30*bnext()) return w;
+  if(u1 >= 0.16+0.30*bnext()) return 0;
   const off = (bnext()-0.5)*0.24, uF=bnext(), uR=bnext(), uH=bnext();
   const shp = NSHAPE[i], t = SEASON.t+off;
   /* needles, ferns and wheat do not flower; they may still carry fruit */
@@ -3804,15 +3816,20 @@ function emitBloom(i, w, keep, dim, cov){
   if(uF<0.85 && shp!==5 && shp!==6 && shp!==8) e = yearRamp(t, 0.10, 0.32, 0.85, 1.20);
   if(e<=0 && uR<0.62){ e = yearRamp(t, 1.35, 1.70, 2.25, 2.60); kind = 1; }
   if(e<=0 && uH<0.32){ e = yearRamp(t, 2.95, 3.20, 3.50, 3.70); kind = 2; }
-  if(e<=0) return w;
-  const at = ptick-NBORN[i], a = at/Math.max(1, lifeShown(i));
-  if(a>=LEAF_GONE) return w;
+  if(e<=0) return 0;
+  const at = ptick-NBORN[i], a = at/Math.max(1, paint ? lifeShown(i) : NLIFE[i]);
+  if(a>=LEAF_GONE) return 0;
   const u2 = ((Math.imul(hn, 0x27D4EB2F)>>>0))/4294967296;
   let s = e*1.6 - u2*0.6; s = s<=0 ? 0 : (s>=1 ? 1 : s*s*(3-2*s));
   if(at<240){ const y=at/240; s *= y*y*(3-2*y); }
   if(a>LEAF_FULL){ const q=(a-LEAF_FULL)/(LEAF_GONE-LEAF_FULL); s *= 1-q*q*(3-2*q); }
-  s *= keep;
+  BL_KIND = kind; BL_HN = hn; BL_H = h;
+  return s;
+}
+function emitBloom(i, w, keep, dim, cov){
+  const s = bloomOn(i, true)*keep;
   if(s<=0.02) return w;
+  const kind = BL_KIND, hn = BL_HN, h = BL_H;
   let P, col, eye, half, shape;
   if(kind===0){
     BH = h ^ 0x1B873593;
@@ -4181,6 +4198,234 @@ function emitNode(i, pass, w){
     w+=INST;
   
   return emitBloom(i, w, keep, dim, cov);     /* over its own leaf */
+}
+
+/* ---- insects (Don, 2026-10-04) ----
+   Small white butterflies from late spring into early summer, and bees for
+   as long as there are flowers, which they alone stop on. They are not in the world: nothing here is read by the
+   simulation, their random numbers are Math.random and never prnd, and they
+   run on the wall clock, a frame at a time, so they fly at the same pace in
+   winter's slow world as in summer's and at any frame rate. They READ the
+   world, though: an insect makes for a living node, lands on it and rides it
+   as its branch sways, and leaves if it dies under it.
+   What makes a butterfly look like one is that it never flies straight. Its
+   heading is thrown to a new one several times a second (jink), wide of
+   where it is going, and its speed with it, so it arrives by a drunkard's
+   route; it bobs sideways with each wingbeat; and from above a wingbeat is
+   the wings narrowing to nothing and opening again, which is the width of
+   its square (open). Settled, it opens and shuts them slowly.
+   A bee is the opposite: fast and nearly straight between plants with a
+   slight weave, then a tight restless hover at each, then on to one nearby.
+   Each has a shadow, under it and aside by how high it is flying, which
+   closes up as it lands: without it they slid over the picture like
+   stickers.
+   Drawn after the plants, from their own few instances written every frame
+   behind the last plant instance in the same buffer, so they move at the
+   frame rate even where a rebuild takes several frames. */
+/* An insect's size goes with the leaves' (Don, 2026-10-04): in a world of
+   fewer, bigger plants one fixed size was a speck on a leaf. BUGS_K follows
+   the plants' step, a little less than in proportion, so on a television's
+   world, four times the step, an insect is three times the size and still
+   smaller against a leaf than it is at the default; bugSize also follows the
+   leaf-size dials, and not the style drift, which would make them breathe.
+   They fly faster as they grow, by the root of it (BUGS_V), or a big
+   butterfly would crawl. */
+const BUGS_K = Math.pow(Math.max(0.005, PARAMS.step)/0.020, 0.8), BUGS_V = Math.sqrt(BUGS_K);
+function bugSize(){ return BUGS_K*Math.max(0.6, Math.min(1.8, (PARAMS.fatlo+PARAMS.fathi)/0.48)); }
+const BUGMAX = 40;
+const BUGBUF = new Float32Array(BUGMAX*2*INST);
+const BUGS = [];
+let bugClock = 0;
+function wrapPi(a){ while(a>Math.PI) a-=2*Math.PI; while(a<-Math.PI) a+=2*Math.PI; return a; }
+/* a living node with its leaf still on it, or -1; for a bee, one with an
+   open flower on it, because a bee stops on flowers and nothing else (Don,
+   2026-10-04) */
+function bugFlower(i){ return NLIVE[i]===1 && !NDYING[i] && bloomOn(i, false)>0.5 && BL_KIND===0; }
+function bugNode(bee){
+  for(let k=0, n = bee ? 60 : 14; k<n && nodeHigh>0; k++){
+    const i=(Math.random()*nodeHigh)|0;
+    if(bee ? bugFlower(i) : (NLIVE[i]===1 && !NDYING[i] && (ptick-NBORN[i]) < 0.7*NLIFE[i])) return i;
+  }
+  return -1;
+}
+/* where node i's flower is: beside the joint, as emitBloom sets it, for a
+   flower of middling size */
+const BSPOT = new Float32Array(2);
+function bugSpot(b, i, drawn){
+  let x=NX[i], y=NY[i];
+  if(drawn){ drawPos(i); x=DP[0]; y=DP[1]; }
+  if(b.kind===1){
+    let hn = Math.imul(i+1, 0x9E3779B1) ^ Math.imul(NBORN[i]|0, 0x85EBCA6B);
+    hn ^= hn>>>15; hn = Math.imul(hn, 0x2C1B3C6D); hn ^= hn>>>12;
+    const o = 0.45*PARAMS.step*0.62*PARAMS.bloom*((hn>>>9)&1 ? 1 : -1);
+    x -= NHY[i]*o; y += NHX[i]*o;
+  }
+  BSPOT[0]=x; BSPOT[1]=y;
+}
+/* somewhere to go: a node, the nearest of a few when it is foraging */
+function bugTarget(b, near){
+  let best=-1, bd=1e9;
+  const bee = b.kind===1;
+  for(let k=0, n = near ? 5 : 1; k<n; k++){
+    const i=bugNode(bee); if(i<0) continue;
+    const dx=NX[i]-b.x, dy=NY[i]-b.y, d=dx*dx+dy*dy;
+    if(d<bd && d>0.0009 && Math.abs(NX[i])<AX && Math.abs(NY[i])<AY){ bd=d; best=i; }
+  }
+  if(best>=0){ b.node=best; b.born=NBORN[best]; bugSpot(b, best, false); b.tx=BSPOT[0]; b.ty=BSPOT[1]; }
+  else if(bee){
+    /* no flower to be found: it goes, over the nearer side */
+    b.leave=true; b.state=0; b.node=-1;
+    b.tx=(b.x>=0?1:-1)*(AX+0.4); b.ty=b.y+(Math.random()-0.5);
+  }
+  else { b.node=-1; b.tx=(Math.random()*2-1)*AX*0.9; b.ty=(Math.random()*2-1)*AY*0.9; }
+}
+function bugSpawn(kind){
+  if(BUGS.length>=BUGMAX) return;
+  const side=(Math.random()*4)|0, u=Math.random()*2-1;
+  const b={kind, x: side<2 ? (side?1:-1)*(AX+0.05) : u*AX, y: side<2 ? u*AY : (side===2?1:-1)*(AY+0.05),
+           th:0, thd:0, v:0, vt:0.1, jink:0, state:0, t:Math.random()*10, node:-1, born:0, tx:0, ty:0,
+           ph:Math.random()*6.28, f:4.3+1.6*Math.random(), open:1, lift:1,
+           k1:9+6*Math.random(), k2:11+6*Math.random(), cruise:0.26+0.16*Math.random(),
+           tint:Math.random(), leave:false};
+  b.th = b.thd = Math.atan2(-b.y, -b.x);
+  bugTarget(b, false);
+  BUGS.push(b);
+}
+function bugLeave(kind){
+  for(const b of BUGS) if(b.kind===kind && !b.leave){
+    b.leave=true; b.state=0; b.node=-1;
+    b.tx=(b.x>=0?1:-1)*(AX+0.4); b.ty=b.y+(Math.random()-0.5);
+    return;
+  }
+}
+/* on its node, where that is DRAWN, if it still stands */
+function bugRide(b){
+  const i=b.node;
+  if(i<0 || NLIVE[i]!==1 || NBORN[i]!==b.born || NDYING[i]) return false;
+  if(b.kind===1 && !bugFlower(i)) return false;         /* its flower has closed */
+  bugSpot(b, i, true); b.x=BSPOT[0]; b.y=BSPOT[1];
+  return true;
+}
+function bugAim(b){
+  if(b.node>=0 && !b.leave){
+    const i=b.node;
+    if(NLIVE[i]===1 && NBORN[i]===b.born && (b.kind===0 || bugFlower(i))){ bugSpot(b, i, false); b.tx=BSPOT[0]; b.ty=BSPOT[1]; }
+    else bugTarget(b, b.kind===1);
+  }
+}
+function butterflyStep(b, dt){
+  if(b.state===1){
+    b.jink -= dt;
+    if(bugRide(b) && b.jink>0){
+      /* settled: the wings open and shut slowly, and rest shut for a while */
+      b.open = 0.10 + 0.90*Math.max(0, Math.sin(b.t*2.4 + b.ph));
+      b.lift += (0-b.lift)*Math.min(1, dt*8);
+      return;
+    }
+    b.state=0; b.jink=0; bugTarget(b, false);
+  }
+  b.lift += (1-b.lift)*Math.min(1, dt*5);
+  bugAim(b);
+  const dx=b.tx-b.x, dy=b.ty-b.y, dist=Math.sqrt(dx*dx+dy*dy);
+  b.jink -= dt;
+  if(b.jink<=0){
+    /* a new heading, wide of the mark, and a new speed: several a second */
+    b.jink = 0.10 + 0.45*Math.random();
+    const wild = b.leave ? 0.5 : (dist>0.25 ? 2.0 : 1.1);
+    b.thd = Math.atan2(dy, dx) + (Math.random()+Math.random()+Math.random()-1.5)*wild;
+    b.vt = (0.11 + 0.24*Math.random())*BUGS_V*(dist<0.08*BUGS_K ? 0.5 : 1);
+  }
+  const d=wrapPi(b.thd-b.th), m=10*dt;
+  b.th += d>m ? m : (d<-m ? -m : d);
+  b.v += (b.vt-b.v)*Math.min(1, dt*7);
+  b.x += Math.cos(b.th)*b.v*dt; b.y += Math.sin(b.th)*b.v*dt;
+  b.ph += 6.2832*b.f*dt;
+  b.open = 0.14 + 0.86*Math.abs(Math.cos(b.ph));
+  if(!b.leave && dist<0.02){
+    if(b.node>=0 && Math.random()<0.55){ b.state=1; b.jink=2+5*Math.random(); }
+    else bugTarget(b, Math.random()<0.6);
+  }
+}
+function beeStep(b, dt){
+  if(b.state===1){
+    b.jink -= dt;
+    if(bugRide(b) && b.jink>0){ b.lift += (0-b.lift)*Math.min(1, dt*10); return; }
+    b.state=0; bugTarget(b, true);
+  }
+  b.lift += (1-b.lift)*Math.min(1, dt*6);
+  bugAim(b);
+  const dx=b.tx-b.x, dy=b.ty-b.y, dist=Math.sqrt(dx*dx+dy*dy);
+  if(b.state===2){
+    /* at a plant: a tight, restless hover about it, facing it */
+    b.jink -= dt;
+    const hx=b.tx+0.014*BUGS_K*Math.sin(b.t*b.k1), hy=b.ty+0.011*BUGS_K*Math.sin(b.t*b.k2+1.3), k=Math.min(1, dt*12);
+    b.x += (hx-b.x)*k; b.y += (hy-b.y)*k;
+    if(dist>0.004){ const dth=wrapPi(Math.atan2(dy, dx)-b.th); b.th += dth*Math.min(1, dt*10); }
+    if(b.jink<=0){
+      if(b.node>=0 && Math.random()<0.5){ b.state=1; b.jink=0.6+2*Math.random(); }
+      else { b.state=0; bugTarget(b, true); }
+    }
+    return;
+  }
+  /* between plants: fast, nearly straight, a slight weave */
+  const want=Math.atan2(dy, dx)+0.35*Math.sin(b.t*b.k1*0.5);
+  const d=wrapPi(want-b.th), m=6*dt;
+  b.th += d>m ? m : (d<-m ? -m : d);
+  b.v += ((dist<0.10*BUGS_K ? 0.12 : b.cruise)*BUGS_V-b.v)*Math.min(1, dt*5);
+  b.x += Math.cos(b.th)*b.v*dt; b.y += Math.sin(b.th)*b.v*dt;
+  if(!b.leave && dist<0.03*BUGS_K){ b.state=2; b.jink=0.5+1.5*Math.random(); }
+}
+function bugsStep(dt){
+  if(SEASON.on<=0 || PARAMS.insects<=0){ BUGS.length=0; return; }
+  if(!(dt>0)) return;
+  if(dt>0.05) dt=0.05;                        /* a long frame is a pause, not a leap */
+  const t=SEASON.t;
+  const wantB = Math.round((IS_TV ? 7 : 10)*yearRamp(t, 0.50, 0.72, 1.35, 1.60));
+  /* bees while there are flowers, which is spring and the first of summer */
+  const wantZ = PARAMS.flowers>0 ? Math.round((IS_TV ? 5 : 8)*yearRamp(t, 0.25, 0.45, 0.95, 1.15)) : 0;
+  /* they come and go one at a time, over the edge */
+  bugClock -= dt;
+  if(bugClock<=0){
+    bugClock = 1.5 + 2.5*Math.random();
+    let nB=0, nZ=0;
+    for(const b of BUGS) if(!b.leave){ if(b.kind===0) nB++; else nZ++; }
+    if(nB<wantB) bugSpawn(0); else if(nB>wantB) bugLeave(0);
+    if(nZ<wantZ) bugSpawn(1); else if(nZ>wantZ) bugLeave(1);
+  }
+  for(let n=BUGS.length-1;n>=0;n--){
+    const b=BUGS[n];
+    b.t += dt;
+    if(b.kind===0) butterflyStep(b, dt); else beeStep(b, dt);
+    if(b.leave && (Math.abs(b.x)>AX+0.12 || Math.abs(b.y)>AY+0.12)) BUGS.splice(n, 1);
+  }
+}
+function bugInst(w, x, y, L, W, c, s, shape, r, g, bl, al, lit){
+  BUGBUF[w+I_A]=x; BUGBUF[w+I_A+1]=y;
+  BUGBUF[w+I_B]=L; BUGBUF[w+I_B+1]=W;
+  BUGBUF[w+I_C]=0; BUGBUF[w+I_C+1]=shape;
+  BUGBUF[w+I_D]=c; BUGBUF[w+I_D+1]=s;
+  BUGBUF[w+I_W]=-1; BUGBUF[w+I_W+1]=lit;
+  BUGBUF[w+I_COL]=r; BUGBUF[w+I_COL+1]=g; BUGBUF[w+I_COL+2]=bl; BUGBUF[w+I_COL+3]=al;
+  BUGBUF[w+I_C0]=0;
+  return w+INST;
+}
+/* the instances, shadow then insect; returns how many */
+function bugsWrite(){
+  let w=0;
+  const K=bugSize();
+  for(const b of BUGS){
+    const but = b.kind===0, fly = b.state!==1;
+    /* about a leaf's size at the default step: at half this a butterfly was two
+       white dots */
+    const L = (but ? 0.024 : 0.011)*K, W = (but ? 0.029*b.open : 0.0125)*K;
+    const th = b.th + (but && fly ? 0.22*Math.sin(b.ph*0.5) : 0), c=Math.cos(th), s=Math.sin(th);
+    let x=b.x, y=b.y;
+    if(but && fly){ const o=0.006*K*Math.sin(b.ph*0.5+1); x-=s*o; y+=c*o; }
+    if(b.lift>0.05) w = bugInst(w, x+0.011*K*b.lift, y-0.014*K*b.lift, L, W, c, s, but?22:23, 0, 0, 0, 0.22*b.lift, 0);
+    if(but){ const k=0.93+0.07*b.tint; w = bugInst(w, x, y, L, W, c, s, 22, 0.98, 0.98*k, 0.95*k*k, 1, 1); }
+    else w = bugInst(w, x, y, L, W, c, s, 23, 0.93, 0.66+0.10*b.tint, 0.12, 1, 1);
+  }
+  return w/INST;
 }
 
 /* The cursor a sliced rebuild carries between frames. */
@@ -6628,17 +6873,55 @@ float bloomQ(vec2 p, inout vec3 rgb){
   if(cal > 0.5 && dd < 0.05) rgb = cen;
   return q;
 }
+/* An insect, from above, head toward +x: a white butterfly (shape 22) or a
+   bee (23). vStalk is 1 for the insect and 0 for its shadow, which is the
+   same outline in black. A butterfly's wingbeat is done by the instance, as
+   the width of its square. gA is how solid this part of it is: a bee's wings
+   are a pale blur. */
+float gA = 1.0;
+float bugQ(vec2 p, inout vec3 rgb){
+  vec2 a = vec2(p.x, abs(p.y));
+  if(vShape < 22.5){
+    float body = length(vec2(p.x/0.60, p.y/0.075));
+    /* the forewing is long and swept out and forward, the hindwing small and
+       round behind it, with a notch between: four equal round lobes read as
+       a clover, not a butterfly */
+    vec2 fd = a - vec2(0.30, 0.50);
+    float fore = length(vec2(dot(fd, vec2(0.45, 0.893))/0.52, dot(fd, vec2(0.893, -0.45))/0.27));
+    float hind = length((a - vec2(-0.30, 0.33))/vec2(0.32, 0.33));
+    vec3 wing = rgb;
+    /* the dark tip of the forewing and its one spot: a cabbage white */
+    if(fore <= 1.0 && length(a - vec2(0.52, 0.94)) < 0.24) wing *= 0.42;
+    if(length(a - vec2(0.30, 0.56)) < 0.07) wing *= 0.35;
+    if(fore > 1.0) wing *= 0.93;                      /* the hindwing, a shade duller */
+    rgb = (body < 1.0 ? vec3(0.16, 0.15, 0.14) : wing)*vStalk;
+    /* a crisp edge: the leaf's soft one made a thing this small a blur */
+    return 1.0 - (1.0 - min(min(fore, hind), body))*3.0;
+  }
+  float body = length(vec2(p.x/0.80, p.y/0.42));
+  float wq = length((a - vec2(-0.10, 0.52))/vec2(0.50, 0.30));
+  if(body < 1.0){
+    float band = step(0.5, fract(p.x*1.9 + 0.35));
+    vec3 c = mix(rgb, vec3(0.13, 0.10, 0.07), band);
+    if(p.x > 0.42) c = vec3(0.13, 0.10, 0.07);
+    rgb = c*vStalk;
+    return 1.0 - (1.0 - min(body, wq))*3.0;
+  }
+  rgb = vec3(0.86, 0.90, 0.95)*vStalk; gA = 0.45;
+  return wq;
+}
 void main(){
   /* a leaf is a disc; a branch is soft across itself and whole along */
   gSW = vSW;
   vec3 rgb = vCol.rgb;
   float q;
   if(vKind > 0.5) q = length(vec2(vC.y, vCap));
+  else if(vShape > 21.5) q = bugQ(vC, rgb);
   else if(vShape > 19.5) q = bloomQ(vC, rgb);
   else q = leafQ(vC, vShape);
   /* ascending, always: a descending smoothstep is undefined and vanishes on
      some drivers */
-  float a = (1.0 - smoothstep(1.0-uSoft, 1.0, q))*vCol.a;
+  float a = (1.0 - smoothstep(1.0-uSoft, 1.0, q))*vCol.a*gA;
   if(a <= 0.004) discard;
   o = vec4(gStalk > 0.5 ? rgb*vStalk : rgb, a);
 }`);
@@ -6766,8 +7049,16 @@ function renderPlants(){
     gl.uniform1f(plantProg.u.uSoft, Math.max(0.02,PARAMS.soft));
     gl.uniform2f(plantProg.u.uInv, 1/AX, 1/AY);
     gl.uniform1f(plantProg.u.uPx, 2*AX/Math.max(1,VW));
+    /* the insects, written behind the last plant instance each frame */
+    let total = instN;
+    { const nb = bugsWrite();
+      if(nb>0 && instN+nb<=MAXINST){
+        gl.bindBuffer(gl.ARRAY_BUFFER,instVBO);
+        gl.bufferSubData(gl.ARRAY_BUFFER, instN*INST*4, BUGBUF, 0, nb*INST);
+        total += nb;
+      } }
     gl.bindVertexArray(plantVAO);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,(RIB+3)*2,instN);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,(RIB+3)*2,total);
     gl.bindVertexArray(null);
   }
   PERF.draw += performance.now()-_d0;
@@ -7258,6 +7549,7 @@ function frame(now){
   gl.clearColor(GROUND[0],GROUND[1],GROUND[2],1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
+  if(!paused) bugsStep(viewDt);
   drawGround();
   renderPlants();
   /* Every couple of seconds the GPU is timed over one frame's draws: a fence
@@ -7791,6 +8083,11 @@ const SETTINGS = [
     {label:"None", why:"leaves and branches only", set:{flowers:0}}],
   test:p=>p.flowers>0?1:0,
   why:"Whether plants flower and fruit as the year turns. Each plant family has its own flower and its own fruit, and some keep red berries through the winter. Needs the seasons to be turning."},
+ {key:"insects", name:"Insects", choice:[
+    {label:"In season", why:"white butterflies in late spring and early summer, bees while the flowers are out", set:{insects:1}},
+    {label:"None", why:"plants only", set:{insects:0}}],
+  test:p=>p.insects>0?1:0,
+  why:"Whether butterflies and bees visit. They fly to the plants, land on them and ride them as they sway, and they take no part in the plants' competition. Needs the seasons to be turning."},
  {key:"season", name:"Season length", min:1, max:10, step:0.5,
   lo:"a minute", hi:"ten minutes",
   why:"How long each season lasts, by the clock on the wall rather than the plants' own time, so it is the same on a slow screen as a fast one.",

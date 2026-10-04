@@ -785,8 +785,10 @@ from; the ones marked **[here]** were found in this codebase.
   the branch swayed and read as a flat disc turning. Flowers are flat and keep
   a fixed angle.
   `MAXINST` is four per node for it.
-  *Pace (`SEASON.pace`):* the world runs 1.2 of its ticks a second in spring
-  and summer, 0.6 in fall, 0.15 in winter. Pacing only: the same ticks in the
+  *Pace (`SEASON.pace`):* the world runs 0.96 of its ticks a second in spring
+  and summer, 0.48 in fall, 0.15 in winter (the first three were a fifth
+  higher until 2026-10-04, when Don found the plants moving too fast; a season
+  is 1 minute by default since the same day, where it was 3). Pacing only: the same ticks in the
   same order, so growth, ageing and sway slow together and seed 7 is still the
   same world. Don chose this over separate growth and motion dials inside the
   simulation; slowing growth alone kills every plant a quarter into winter (a
@@ -800,6 +802,25 @@ from; the ones marked **[here]** were found in this codebase.
   where the leaf is DRAWN, never its node, or a leaf handed to a new tip would
   jump. With the year turning there is a new picture every frame.
   The corner shows the season's name and nothing else.
+- **Insects (2026-10-04; `insects=0`, `bugsStep`, `bugsWrite`, `bugQ`).** White
+  butterflies from late spring into early summer; bees only while there are flowers (spring into the first of summer), and a bee stops only on a node with an open flower (`bloomOn`, the one rule the paint and the bees both ask; `bugFlower`). They come and go by flying over the edge, one at a time, never by fading.
+  Not in the world: `Math.random`, the wall clock, a frame at a time, and they
+  only READ it — an insect flies to a living node, lands, rides it where it is
+  drawn (`drawPos`) and leaves if it dies. Their size goes with the leaves' (`BUGS_K`, the step to the power 0.8, times the leaf-size dials; `bugSize`): one fixed size was a speck in a world of big plants. A
+  butterfly never flies straight: its heading and speed are thrown to new
+  ones several times a second, wide of its target; it bobs sideways with each
+  wingbeat; and a wingbeat from above is the WIDTH of its square closing and
+  opening, done on the CPU. A bee is fast and nearly straight between plants,
+  then a tight hover, then a plant nearby. Each has a shadow offset by how
+  high it flies, which closes as it lands. They are shapes 22 and 23 of the
+  leaf instance, written every frame BEHIND the last plant instance in the
+  same buffer and drawn in the same call, so they move at the frame rate even
+  where a rebuild takes several frames. Two things the first pictures showed:
+  at half the size a butterfly was two white dots, and four round wing lobes
+  read as a clover — the forewing is long and swept, the hindwing small, with
+  a notch between — and the leaf's soft edge blurred something this small, so
+  an insect's edge is three times as crisp. Their flight was judged from
+  plotted paths and close-up stills, never as motion.
 
 **Twelve leaf shapes** (lance, spade, heart, clover, needles, fern, aspen,
   wheat, dandelion, oak, maple, horse chestnut; shape 0, the plain disc, is retired but its number is
